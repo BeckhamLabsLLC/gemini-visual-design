@@ -34,7 +34,12 @@ def read_image(image_path: str) -> tuple[bytes, str]:
         raise FileNotFoundError(f"Image not found: {image_path}")
 
     ext = path.suffix.lower()
-    mime_type = MIME_MAP.get(ext, "image/png")
+    if ext not in MIME_MAP:
+        raise ValueError(
+            f"Unsupported image format: {ext or '(none)'}. "
+            f"Supported: {sorted(MIME_MAP.keys())}"
+        )
+    mime_type = MIME_MAP[ext]
 
     with open(path, "rb") as f:
         data = f.read()

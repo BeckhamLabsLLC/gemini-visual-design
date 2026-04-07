@@ -74,3 +74,48 @@ class TestVideoModelMap:
         assert "veo-2" in VIDEO_MODEL_MAP
         assert "veo-3.1" in VIDEO_MODEL_MAP
         assert "veo-3.1-fast" in VIDEO_MODEL_MAP
+
+
+class TestVideoGenerationWithImage:
+    """Regression tests for image-to-video prompt handling.
+
+    Veo accepts a prompt alongside an image input — the prompt guides how the
+    reference frame should be animated. A previous bug silently dropped the
+    prompt whenever an image was provided.
+    """
+
+    @pytest.mark.asyncio
+    async def test_prompt_passed_with_image(self):
+        with patch("gemini_visual_mcp.gemini_client.genai") as mock_genai:
+            mock_models = MagicMock()
+            mock_genai.Client.return_value.models = mock_models
+            mock_models.generate_videos = MagicMock(return_value="op")
+
+            client = GeminiClient(api_key="test-key")
+            await client.generate_video(
+                prompt="dolly forward through a misty forest",
+                model="veo-2",
+                image_data=b"image-bytes",
+                image_mime_type="image/png",
+            )
+
+            call_kwargs = mock_models.generate_videos.call_args.kwargs
+            assert call_kwargs["prompt"] == "dolly forward through a misty forest"
+            assert call_kwargs["image"] is not None
+
+    @pytest.mark.asyncio
+    async def test_prompt_passed_without_image(self):
+        with patch("gemini_visual_mcp.gemini_client.genai") as mock_genai:
+            mock_models = MagicMock()
+            mock_genai.Client.return_value.models = mock_models
+            mock_models.generate_videos = MagicMock(return_value="op")
+
+            client = GeminiClient(api_key="test-key")
+            await client.generate_video(
+                prompt="a calm ocean at sunset",
+                model="veo-2",
+            )
+
+            call_kwargs = mock_models.generate_videos.call_args.kwargs
+            assert call_kwargs["prompt"] == "a calm ocean at sunset"
+            assert call_kwargs["image"] is None

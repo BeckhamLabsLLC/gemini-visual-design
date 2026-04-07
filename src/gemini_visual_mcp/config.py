@@ -7,8 +7,13 @@ from pathlib import Path
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 # Model identifiers
-GEMINI_FLASH_IMAGE = "gemini-2.5-flash-image"
-GEMINI_FLASH_TEXT = "gemini-2.5-flash-preview-05-20"
+# Image generation: Gemini 3.1 Flash Image Preview ("Nano Banana 2") is the
+# current high-efficiency production model as of April 2026. The older
+# "gemini-2.5-flash-image" is still listed by Google but has been throttled to
+# zero on the free tier on at least some accounts; switching to 3.1 unblocks
+# generation and gives better quality.
+GEMINI_FLASH_IMAGE = "gemini-3.1-flash-image-preview"
+GEMINI_FLASH_TEXT = "gemini-2.5-flash"
 IMAGEN_MODEL = "imagen-4.0-generate-001"
 VEO_2_MODEL = "veo-2.0-generate-001"
 VEO_3_MODEL = "veo-3.1-generate-preview"

@@ -69,42 +69,6 @@ class GeminiClient:
             )
         self._client = genai.Client(api_key=self._api_key)
 
-    async def _retry_async(self, func, *args, **kwargs) -> Any:
-        """Execute an async function with exponential backoff retry."""
-        last_error = None
-        for attempt in range(MAX_RETRIES):
-            try:
-                return await func(*args, **kwargs)
-            except Exception as e:
-                last_error = e
-                error_str = str(e).lower()
-
-                # Don't retry auth errors
-                if "api key" in error_str or "authentication" in error_str or "401" in error_str:
-                    raise GeminiAuthError(f"Authentication failed: {e}") from e
-
-                # Don't retry content policy blocks
-                if "safety" in error_str or "blocked" in error_str or "policy" in error_str:
-                    raise GeminiContentPolicyError(
-                        f"Content blocked by safety policy: {e}"
-                    ) from e
-
-                # Retry on rate limits and transient errors
-                if "429" in error_str or "quota" in error_str:
-                    if attempt == MAX_RETRIES - 1:
-                        raise GeminiQuotaError(
-                            f"API quota exceeded after {MAX_RETRIES} retries: {e}"
-                        ) from e
-
-                delay = min(BASE_DELAY * (2**attempt), MAX_DELAY)
-                logger.warning(
-                    f"Retry {attempt + 1}/{MAX_RETRIES} after error: {e}. "
-                    f"Waiting {delay:.1f}s"
-                )
-                await asyncio.sleep(delay)
-
-        raise GeminiClientError(f"Failed after {MAX_RETRIES} retries: {last_error}")
-
     def _sync_call(self, func, *args, **kwargs) -> Any:
         """Execute a sync SDK call with retry logic."""
         last_error = None
@@ -362,10 +326,17 @@ class GeminiClient:
         model_id = VIDEO_MODEL_MAP.get(model, VEO_2_MODEL)
 
         def _call():
+            # Veo accepts a prompt alongside an image input — passing both lets
+            # the user guide the animation of an existing reference frame.
+            image_arg = (
+                types.Image(image_bytes=image_data, mime_type=image_mime_type)
+                if image_data and image_mime_type
+                else None
+            )
             operation = self._client.models.generate_videos(
                 model=model_id,
-                prompt=prompt if not (image_data and image_mime_type) else None,
-                image=types.Image(image_bytes=image_data, mime_type=image_mime_type) if image_data else None,
+                prompt=prompt,
+                image=image_arg,
                 config=types.GenerateVideosConfig(
                     person_generation="allow_all",
                 ),
@@ -402,6 +373,10 @@ class GeminiClient:
                 results = []
                 for video in operation.response.generated_videos:
                     video_data = self._client.files.download(file=video.video)
+                    if not isinstance(video_data, bytes):
+                        raise GeminiClientError(
+                            f"Expected bytes from video download, got {type(video_data).__name__}"
+                        )
                     results.append(
                         {
                             "data": video_data,

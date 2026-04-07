@@ -1,0 +1,12 @@
+{
+  "timestamp": "2026-04-06T22:01:49.772419",
+  "mime_type": "image/jpeg",
+  "size_bytes": 192031,
+  "filename": "gen_20260406_220149_1.jpg",
+  "prompt": "A clean grid of 6 minimal line icons arranged in a 3x2 layout for a project management application: dashboard (gauge), tasks (checklist), calendar (calendar grid), team (people group), settings (gear), notifications (bell). All icons use the same consistent stroke weight (2px), rounded line caps, slightly rounded corners, monochrome dark indigo color #3b82f6 on a flat white background, generous equal padding around each icon, modern minimal aesthetic, vector-style",
+  "enhanced_prompt": "A clean grid of 6 minimal line icons arranged in a 3x2 layout for a project management application: dashboard (gauge), tasks (checklist), calendar (calendar grid), team (people group), settings (gear), notifications (bell). All icons use the same consistent stroke weight (2px), rounded line caps, slightly rounded corners, monochrome dark indigo color #3b82f6 on a flat white background, generous equal padding around each icon, modern minimal aesthetic, vector-style\n\nHigh quality, detailed rendering.",
+  "model": "gemini-2.5-flash-image",
+  "aspect_ratio": "3:4",
+  "template": "",
+  "warnings": []
+}

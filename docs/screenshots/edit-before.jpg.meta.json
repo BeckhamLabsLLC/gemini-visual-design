@@ -1,0 +1,17 @@
+{
+  "timestamp": "2026-04-06T22:02:47.369349",
+  "mime_type": "image/jpeg",
+  "size_bytes": 512371,
+  "filename": "gen_20260406_220247_2.jpg",
+  "prompt": "A modern minimalist product card showing a single sneaker centered on a flat pale beige background, soft natural lighting from the upper left, subtle drop shadow beneath, clean studio photography style, 3/4 angle view, white sneaker with subtle blue accents, no text or labels, generous negative space",
+  "enhanced_prompt": "A modern minimalist product card showing a single sneaker centered on a flat pale beige background, soft natural lighting from the upper left, subtle drop shadow beneath, clean studio photography style, 3/4 angle view, white sneaker with subtle blue accents, no text or labels, generous negative space\n\nHigh quality, detailed rendering.",
+  "model": "gemini-2.5-flash-image",
+  "aspect_ratio": "1:1",
+  "template": "",
+  "warnings": [
+    {
+      "warning": "Negative phrasing detected: 'no text'",
+      "suggestion": "Instead of 'no text', describe what IS there (e.g., 'empty text' or 'without text')"
+    }
+  ]
+}

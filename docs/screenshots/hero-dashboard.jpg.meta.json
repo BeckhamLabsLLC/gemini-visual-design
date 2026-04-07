@@ -1,0 +1,12 @@
+{
+  "timestamp": "2026-04-06T22:00:45.769667",
+  "mime_type": "image/jpeg",
+  "size_bytes": 554880,
+  "filename": "gen_20260406_220045_0.jpg",
+  "prompt": "A dark-themed analytics dashboard for a SaaS product with collapsible sidebar navigation on the left, a top header bar with search and user avatar, four KPI summary cards along the top showing revenue, active users, conversion rate, and growth percentage with trend arrows, a large area chart showing revenue over time in the center, a recent transactions data table on the right, deep slate background (#0f172a), blue (#3b82f6) and violet (#8b5cf6) accent colors, clean Inter typography, modern minimal SaaS aesthetic, subtle border highlights",
+  "enhanced_prompt": "A dark-themed analytics dashboard for a SaaS product with collapsible sidebar navigation on the left, a top header bar with search and user avatar, four KPI summary cards along the top showing revenue, active users, conversion rate, and growth percentage with trend arrows, a large area chart showing revenue over time in the center, a recent transactions data table on the right, deep slate background (#0f172a), blue (#3b82f6) and violet (#8b5cf6) accent colors, clean Inter typography, modern minimal SaaS aesthetic, subtle border highlights\n\nClean, organized layout with clear visual hierarchy. High quality, detailed rendering.",
+  "model": "gemini-2.5-flash-image",
+  "aspect_ratio": "16:9",
+  "template": "",
+  "warnings": []
+}

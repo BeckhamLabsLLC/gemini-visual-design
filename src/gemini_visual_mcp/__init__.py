@@ -4,7 +4,7 @@ Integrates Google Gemini's visual AI capabilities into the development workflow
 with prompt enhancement, project-aware style profiles, and iterative editing.
 """
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
 
 
 def main():

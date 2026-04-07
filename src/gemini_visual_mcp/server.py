@@ -85,7 +85,8 @@ class GeminiVisualDesignServer:
                         "properties": {
                             "prompt": {
                                 "type": "string",
-                                "description": "Description of the image to generate",
+                                "minLength": 10,
+                                "description": "Description of the image to generate (min 10 characters)",
                             },
                             "template": {
                                 "type": "string",
@@ -137,11 +138,13 @@ class GeminiVisualDesignServer:
                         "properties": {
                             "image_path": {
                                 "type": "string",
+                                "minLength": 1,
                                 "description": "Path to the image to edit",
                             },
                             "instruction": {
                                 "type": "string",
-                                "description": "Natural language edit instruction (e.g., 'Change the button color to blue')",
+                                "minLength": 10,
+                                "description": "Natural language edit instruction, e.g., 'Change the button color to blue' (min 10 characters)",
                             },
                             "preserve_style": {
                                 "type": "boolean",
@@ -164,6 +167,7 @@ class GeminiVisualDesignServer:
                         "properties": {
                             "image_path": {
                                 "type": "string",
+                                "minLength": 1,
                                 "description": "Path to the design image or screenshot to analyze",
                             },
                             "focus": {
@@ -193,7 +197,8 @@ class GeminiVisualDesignServer:
                         "properties": {
                             "prompt": {
                                 "type": "string",
-                                "description": "Description of the video to generate",
+                                "minLength": 10,
+                                "description": "Description of the video to generate (min 10 characters)",
                             },
                             "model": {
                                 "type": "string",
@@ -203,6 +208,7 @@ class GeminiVisualDesignServer:
                             },
                             "reference_image": {
                                 "type": "string",
+                                "minLength": 1,
                                 "description": "Optional path to reference image for image-to-video",
                             },
                         },
@@ -220,15 +226,18 @@ class GeminiVisualDesignServer:
                         "properties": {
                             "temp_path": {
                                 "type": "string",
+                                "minLength": 1,
                                 "description": "Path to the file in the preview directory",
                             },
                             "destination_dir": {
                                 "type": "string",
+                                "minLength": 1,
                                 "description": "Target directory in your project",
                             },
                             "filename": {
                                 "type": "string",
-                                "description": "Desired filename (e.g., 'hero-image.png')",
+                                "minLength": 1,
+                                "description": "Desired filename, e.g., 'hero-image.png' (must not contain path separators that escape destination_dir)",
                             },
                         },
                         "required": ["temp_path", "destination_dir", "filename"],
@@ -256,10 +265,12 @@ class GeminiVisualDesignServer:
                         "properties": {
                             "description": {
                                 "type": "string",
-                                "description": "Description of the desired design system (mood, brand, style)",
+                                "minLength": 10,
+                                "description": "Description of the desired design system — mood, brand, style (min 10 characters)",
                             },
                             "reference_image": {
                                 "type": "string",
+                                "minLength": 1,
                                 "description": "Optional path to reference image to extract design tokens from",
                             },
                             "format": {
@@ -346,9 +357,16 @@ class GeminiVisualDesignServer:
                 return [TextContent(type="text", text=json.dumps({"error": str(e), "type": "api_error"}, indent=2))]
             except FileNotFoundError as e:
                 return [TextContent(type="text", text=json.dumps({"error": str(e), "type": "file_not_found"}, indent=2))]
-            except Exception as e:
+            except ValueError as e:
+                # Raised by image_utils for unsupported MIME and asset_manager
+                # for path-traversal attempts. These are user errors, not bugs.
+                return [TextContent(type="text", text=json.dumps({"error": str(e), "type": "invalid_argument"}, indent=2))]
+            except Exception:
+                # Truly unexpected — log the full traceback and re-raise so the
+                # MCP framework surfaces it to the client. We want bugs to be
+                # noisy, not silently wrapped as a generic error string.
                 logger.exception(f"Unexpected error in tool {name}")
-                return [TextContent(type="text", text=json.dumps({"error": str(e), "type": "internal_error"}, indent=2))]
+                raise
 
     async def _handle_tool(self, name: str, args: dict) -> Any:
         """Route tool calls to the appropriate handler."""
@@ -624,6 +642,25 @@ Return ONLY the {token_format} code, no explanations."""
 
 def main():
     """Entry point for the MCP server."""
+    from . import __version__
+
+    api_key_status = "[set]" if os.environ.get("GEMINI_API_KEY") else "[missing]"
+    tools = [
+        "generate_image",
+        "edit_image",
+        "analyze_design",
+        "generate_video",
+        "save_asset",
+        "list_generated",
+        "generate_design_tokens",
+        "init_style_profile",
+        "get_prompt_templates",
+    ]
+    logger.info(
+        f"gemini-visual-design v{__version__} starting | "
+        f"GEMINI_API_KEY={api_key_status} | "
+        f"tools={','.join(tools)}"
+    )
     server = GeminiVisualDesignServer()
     asyncio.run(server.run())
 

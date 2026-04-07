@@ -106,6 +106,22 @@ class TestSaveToProject:
         with pytest.raises(FileNotFoundError):
             save_to_project("/nonexistent/file.png", str(tmp_path), "out.png")
 
+    def test_save_rejects_path_traversal(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("gemini_visual_mcp.asset_manager.PREVIEW_DIR", tmp_path)
+        path = save_generated(b"data", "image/png", {"prompt": "test"})
+        dest = tmp_path / "project"
+        with pytest.raises(ValueError, match="outside destination"):
+            save_to_project(str(path), str(dest), "../escaped.png")
+        # Confirm the escape target was not created
+        assert not (tmp_path / "escaped.png").exists()
+
+    def test_save_rejects_absolute_path_filename(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("gemini_visual_mcp.asset_manager.PREVIEW_DIR", tmp_path)
+        path = save_generated(b"data", "image/png", {"prompt": "test"})
+        dest = tmp_path / "project"
+        with pytest.raises(ValueError, match="outside destination"):
+            save_to_project(str(path), str(dest), "/tmp/absolute.png")
+
 
 class TestCleanup:
     """Tests for old file cleanup."""

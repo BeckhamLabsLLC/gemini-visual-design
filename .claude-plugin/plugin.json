@@ -3,18 +3,25 @@
   "version": "1.0.0",
   "description": "Integrates Google Gemini's visual AI capabilities into the development workflow - image generation, editing, video creation, and design analysis with prompt enhancement and project-aware style profiles",
   "author": {
-    "name": "BeckhamLabs"
+    "name": "BeckhamLabs",
+    "url": "https://github.com/BeckhamLabsLLC"
   },
   "license": "MIT",
   "repository": "https://github.com/BeckhamLabsLLC/gemini-visual-design",
   "homepage": "https://github.com/BeckhamLabsLLC/gemini-visual-design",
   "keywords": [
+    "mcp",
+    "claude-code",
+    "claude-code-plugin",
     "gemini",
+    "imagen",
+    "veo",
     "visual-design",
     "image-generation",
     "video-generation",
-    "design-analysis",
-    "mcp",
-    "claude-code-plugin"
+    "ai-image-generator",
+    "design-system",
+    "design-tokens",
+    "design-analysis"
   ]
 }

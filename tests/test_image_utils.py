@@ -46,11 +46,17 @@ class TestReadImage:
         _, mime = read_image(str(img))
         assert mime == "image/bmp"
 
-    def test_unknown_extension_defaults_to_png(self, tmp_path):
+    def test_unknown_extension_raises(self, tmp_path):
         img = tmp_path / "test.tiff"
         img.write_bytes(b"tiff-data")
-        _, mime = read_image(str(img))
-        assert mime == "image/png"
+        with pytest.raises(ValueError, match="Unsupported image format"):
+            read_image(str(img))
+
+    def test_no_extension_raises(self, tmp_path):
+        img = tmp_path / "noext"
+        img.write_bytes(b"data")
+        with pytest.raises(ValueError, match="Unsupported image format"):
+            read_image(str(img))
 
     def test_missing_file_raises(self):
         with pytest.raises(FileNotFoundError, match="Image not found"):

@@ -1,0 +1,12 @@
+{
+  "timestamp": "2026-04-06T22:04:01.571197",
+  "mime_type": "image/jpeg",
+  "size_bytes": 665895,
+  "filename": "edit_20260406_220401_3.jpg",
+  "prompt": "Replace the beige background with a deep rich purple background (#4c1d95), keep the sneaker exactly the same, add a subtle film grain noise texture across the background only, preserve all lighting and shadows on the shoe",
+  "enhanced_prompt": "Replace the beige background with a deep rich purple background (#4c1d95), keep the sneaker exactly the same, add a subtle film grain noise texture across the background only, preserve all lighting and shadows on the shoe",
+  "original_path": "/home/abeck/Desktop/BeckhamLabs/BLabs_plugins/gemini-visual-design/docs/screenshots/edit-before.jpg",
+  "model": "gemini-2.5-flash-image",
+  "operation": "edit",
+  "preserve_style": false
+}

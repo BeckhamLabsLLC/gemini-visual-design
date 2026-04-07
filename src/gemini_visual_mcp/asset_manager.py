@@ -120,10 +120,14 @@ def save_to_project(temp_path: str, dest_dir: str, filename: str) -> Path:
     Args:
         temp_path: Path to the file in preview directory
         dest_dir: Target directory in the project
-        filename: Desired filename
+        filename: Desired filename (must not escape dest_dir)
 
     Returns:
         Path to the saved file in the project
+
+    Raises:
+        FileNotFoundError: If the source file does not exist.
+        ValueError: If filename would resolve outside dest_dir.
     """
     source = Path(temp_path)
     if not source.is_file():
@@ -131,14 +135,25 @@ def save_to_project(temp_path: str, dest_dir: str, filename: str) -> Path:
 
     dest = Path(dest_dir)
     dest.mkdir(parents=True, exist_ok=True)
+    dest_resolved = dest.resolve()
 
-    target = dest / filename
+    target = (dest / filename).resolve()
+    if dest_resolved not in target.parents and target != dest_resolved:
+        raise ValueError(
+            f"Filename {filename!r} resolves outside destination directory {dest_dir!r}"
+        )
+
     shutil.copy2(source, target)
 
-    # Also copy metadata if it exists
+    # Also copy metadata if it exists. The same containment rules apply so a
+    # malicious filename can't smuggle a sidecar into a parent directory.
     meta_source = source.parent / f"{source.name}.meta.json"
     if meta_source.is_file():
-        meta_target = dest / f"{filename}.meta.json"
+        meta_target = (dest / f"{filename}.meta.json").resolve()
+        if dest_resolved not in meta_target.parents and meta_target != dest_resolved:
+            raise ValueError(
+                f"Sidecar for {filename!r} resolves outside destination directory"
+            )
         shutil.copy2(meta_source, meta_target)
 
     logger.info(f"Saved asset to project: {target}")
