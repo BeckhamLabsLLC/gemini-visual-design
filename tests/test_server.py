@@ -140,6 +140,27 @@ class TestToolRouting:
         assert result["count"] > 0
 
     @pytest.mark.asyncio
+    async def test_generate_image_with_reference(self, server):
+        with patch("gemini_visual_mcp.server.auto_generate") as mock_gen:
+            mock_gen.return_value = [
+                {
+                    "path": "/tmp/gen.png",
+                    "model": "gemini",
+                    "enhanced_prompt": "enhanced",
+                    "warnings": [],
+                }
+            ]
+            with patch("gemini_visual_mcp.server.cleanup_old"):
+                await server._handle_tool("generate_image", {
+                    "prompt": "A warrior character with armor and sword design",
+                    "reference_image": "/tmp/ref_character.png",
+                })
+
+        mock_gen.assert_called_once()
+        call_kwargs = mock_gen.call_args.kwargs
+        assert call_kwargs["reference_image"] == "/tmp/ref_character.png"
+
+    @pytest.mark.asyncio
     async def test_unknown_tool(self, server):
         result = await server._handle_tool("nonexistent_tool", {})
         assert "error" in result

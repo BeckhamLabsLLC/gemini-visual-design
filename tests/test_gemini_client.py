@@ -65,6 +65,73 @@ class TestRetryLogic:
                 assert func.call_count == 2
 
 
+class TestGenerateImageWithReference:
+    """Tests for reference image support in generate_image_gemini."""
+
+    @pytest.mark.asyncio
+    async def test_reference_image_sent_as_multipart_contents(self):
+        """When reference image is provided, contents should be a list with Part + prompt."""
+        with patch("gemini_visual_mcp.gemini_client.genai") as mock_genai:
+            mock_models = MagicMock()
+            mock_genai.Client.return_value.models = mock_models
+
+            # Build a fake response with an image part
+            mock_part = MagicMock()
+            mock_part.inline_data = MagicMock()
+            mock_part.inline_data.data = b"generated-image"
+            mock_part.inline_data.mime_type = "image/png"
+            mock_part.text = None
+
+            mock_candidate = MagicMock()
+            mock_candidate.content.parts = [mock_part]
+            mock_response = MagicMock()
+            mock_response.candidates = [mock_candidate]
+            mock_models.generate_content = MagicMock(return_value=mock_response)
+
+            client = GeminiClient(api_key="test-key")
+            await client.generate_image_gemini(
+                prompt="A warrior in matching style",
+                reference_image_data=b"ref-image-bytes",
+                reference_mime_type="image/png",
+            )
+
+            call_args = mock_models.generate_content.call_args
+            contents = call_args.kwargs["contents"]
+            # Should be a list with image Part and text prompt
+            assert isinstance(contents, list)
+            assert len(contents) == 2
+            assert contents[1] == "A warrior in matching style"
+
+    @pytest.mark.asyncio
+    async def test_no_reference_sends_plain_string(self):
+        """Without reference image, contents should be a plain string."""
+        with patch("gemini_visual_mcp.gemini_client.genai") as mock_genai:
+            mock_models = MagicMock()
+            mock_genai.Client.return_value.models = mock_models
+
+            mock_part = MagicMock()
+            mock_part.inline_data = MagicMock()
+            mock_part.inline_data.data = b"generated-image"
+            mock_part.inline_data.mime_type = "image/png"
+            mock_part.text = None
+
+            mock_candidate = MagicMock()
+            mock_candidate.content.parts = [mock_part]
+            mock_response = MagicMock()
+            mock_response.candidates = [mock_candidate]
+            mock_models.generate_content = MagicMock(return_value=mock_response)
+
+            client = GeminiClient(api_key="test-key")
+            await client.generate_image_gemini(
+                prompt="A simple landscape",
+            )
+
+            call_args = mock_models.generate_content.call_args
+            contents = call_args.kwargs["contents"]
+            assert isinstance(contents, str)
+            assert contents == "A simple landscape"
+
+
 class TestVideoModelMap:
     """Tests for video model name mapping."""
 

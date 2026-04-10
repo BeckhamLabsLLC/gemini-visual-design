@@ -106,18 +106,32 @@ class GeminiClient:
         self,
         prompt: str,
         aspect_ratio: str = "16:9",
+        reference_image_data: bytes | None = None,
+        reference_mime_type: str | None = None,
     ) -> list[dict]:
         """Generate image(s) using Gemini native image generation.
 
         Uses responseModalities: ["TEXT", "IMAGE"] to get inline image data.
+        When reference_image_data is provided, the image is sent alongside the
+        prompt so the model can match its style.
 
         Returns list of dicts with keys: 'data' (bytes), 'mime_type' (str), 'text' (str|None)
         """
 
         def _call():
+            if reference_image_data and reference_mime_type:
+                contents = [
+                    types.Part.from_bytes(
+                        data=reference_image_data, mime_type=reference_mime_type
+                    ),
+                    prompt,
+                ]
+            else:
+                contents = prompt
+
             response = self._client.models.generate_content(
                 model=GEMINI_FLASH_IMAGE,
-                contents=prompt,
+                contents=contents,
                 config=types.GenerateContentConfig(
                     response_modalities=["TEXT", "IMAGE"],
                 ),

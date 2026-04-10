@@ -35,6 +35,7 @@ DEFAULT_PROFILE = {
     "image_style": "modern illustrations",
     "default_aspect_ratio": "16:9",
     "default_resolution": "1K",
+    "reference_image": "",
 }
 
 
@@ -80,6 +81,7 @@ def create_profile(
     image_style: str = "",
     aspect_ratio: str = "16:9",
     resolution: str = "1K",
+    reference_image: str = "",
 ) -> Path:
     """Create a new style profile in the target directory."""
     profile = dict(DEFAULT_PROFILE)
@@ -88,6 +90,7 @@ def create_profile(
     profile["design_system"] = design_system
     profile["default_aspect_ratio"] = aspect_ratio
     profile["default_resolution"] = resolution
+    profile["reference_image"] = reference_image
 
     if colors:
         profile["colors"] = {**profile["colors"], **colors}

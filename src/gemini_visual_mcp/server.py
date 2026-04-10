@@ -122,6 +122,17 @@ class GeminiVisualDesignServer:
                                 "default": True,
                                 "description": "Apply project style profile to the prompt",
                             },
+                            "reference_image": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": (
+                                    "Path to an existing image to use as a style reference. "
+                                    "The new image will match the reference's art style, colors, "
+                                    "and visual feel while depicting what the prompt describes. "
+                                    "Use this for visual consistency (e.g., game characters in the same style). "
+                                    "Auto-selects Gemini model when provided."
+                                ),
+                            },
                         },
                         "required": ["prompt"],
                     },
@@ -322,6 +333,14 @@ class GeminiVisualDesignServer:
                                 "type": "string",
                                 "description": "Design system (e.g., 'Material Design 3', 'custom')",
                             },
+                            "reference_image": {
+                                "type": "string",
+                                "description": (
+                                    "Path to a default reference image for style consistency. "
+                                    "When set, all image generations will match this image's style "
+                                    "unless overridden by an explicit reference_image in generate_image."
+                                ),
+                            },
                         },
                         "required": ["project_type"],
                     },
@@ -382,6 +401,7 @@ class GeminiVisualDesignServer:
                 cwd=self._cwd(),
                 use_profile=args.get("use_profile", True),
                 template=args.get("template"),
+                reference_image=args.get("reference_image"),
             )
             # Clean up old previews on generation
             cleanup_old()
@@ -480,6 +500,7 @@ class GeminiVisualDesignServer:
                 visual_style=args.get("visual_style"),
                 framework=args.get("framework"),
                 design_system=args.get("design_system"),
+                reference_image=args.get("reference_image"),
             )
 
         elif name == "get_prompt_templates":
@@ -586,6 +607,7 @@ Return ONLY the {token_format} code, no explanations."""
         visual_style: str | None = None,
         framework: str | None = None,
         design_system: str | None = None,
+        reference_image: str | None = None,
     ) -> dict:
         """Create or update the project style profile."""
         cwd = self._cwd()
@@ -610,6 +632,8 @@ Return ONLY the {token_format} code, no explanations."""
             detected["framework"] = framework
         if design_system:
             detected["design_system"] = design_system
+        if reference_image:
+            detected["reference_image"] = reference_image
 
         # Create the profile
         path = create_profile(
@@ -624,6 +648,7 @@ Return ONLY the {token_format} code, no explanations."""
             image_style=detected.get("image_style", ""),
             aspect_ratio=detected.get("default_aspect_ratio", "16:9"),
             resolution=detected.get("default_resolution", "1K"),
+            reference_image=detected.get("reference_image", ""),
         )
 
         return {
