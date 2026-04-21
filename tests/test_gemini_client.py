@@ -138,9 +138,10 @@ class TestVideoModelMap:
     def test_model_mapping(self):
         from gemini_visual_mcp.gemini_client import VIDEO_MODEL_MAP
 
-        assert "veo-2" in VIDEO_MODEL_MAP
         assert "veo-3.1" in VIDEO_MODEL_MAP
         assert "veo-3.1-fast" in VIDEO_MODEL_MAP
+        # Retired model (removed from API on 2026-04-02) must not be listed.
+        assert "veo-2" not in VIDEO_MODEL_MAP
 
 
 class TestVideoGenerationWithImage:
@@ -161,7 +162,7 @@ class TestVideoGenerationWithImage:
             client = GeminiClient(api_key="test-key")
             await client.generate_video(
                 prompt="dolly forward through a misty forest",
-                model="veo-2",
+                model="veo-3.1-fast",
                 image_data=b"image-bytes",
                 image_mime_type="image/png",
             )
@@ -180,9 +181,54 @@ class TestVideoGenerationWithImage:
             client = GeminiClient(api_key="test-key")
             await client.generate_video(
                 prompt="a calm ocean at sunset",
-                model="veo-2",
+                model="veo-3.1-fast",
             )
 
             call_kwargs = mock_models.generate_videos.call_args.kwargs
             assert call_kwargs["prompt"] == "a calm ocean at sunset"
             assert call_kwargs["image"] is None
+
+
+class TestPollVideoOperation:
+    """Regression tests for video operation polling.
+
+    A previous bug called operation.reload() inside the poll loop, which does
+    not exist on google-genai's GenerateVideosOperation pydantic model — every
+    poll iteration would raise AttributeError after the first 5-second sleep.
+    The correct SDK pattern is client.operations.get(operation), which returns
+    a fresh operation object.
+    """
+
+    @pytest.mark.asyncio
+    async def test_poll_uses_operations_get_not_reload(self):
+        with patch("gemini_visual_mcp.gemini_client.genai") as mock_genai:
+            mock_client_inst = mock_genai.Client.return_value
+
+            op_pending = MagicMock(done=False)
+            op_done = MagicMock(done=True)
+            op_done.response.generated_videos = [MagicMock(video="video-ref")]
+            mock_client_inst.operations.get.return_value = op_done
+            mock_client_inst.files.download.return_value = b"video-bytes"
+
+            with patch("gemini_visual_mcp.gemini_client.time.sleep"):
+                client = GeminiClient(api_key="test-key")
+                results = await client.poll_video_operation(op_pending)
+
+            mock_client_inst.operations.get.assert_called_with(op_pending)
+            assert results == [{"data": b"video-bytes", "mime_type": "video/mp4"}]
+
+    @pytest.mark.asyncio
+    async def test_poll_returns_immediately_when_done(self):
+        with patch("gemini_visual_mcp.gemini_client.genai") as mock_genai:
+            mock_client_inst = mock_genai.Client.return_value
+
+            op_done = MagicMock(done=True)
+            op_done.response.generated_videos = [MagicMock(video="video-ref")]
+            mock_client_inst.files.download.return_value = b"video-bytes"
+
+            client = GeminiClient(api_key="test-key")
+            results = await client.poll_video_operation(op_done)
+
+            # Operation already done — no polling required.
+            mock_client_inst.operations.get.assert_not_called()
+            assert results == [{"data": b"video-bytes", "mime_type": "video/mp4"}]

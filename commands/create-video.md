@@ -26,9 +26,8 @@ Follow this workflow strictly:
 - Clarify: motion style, camera movement, duration, mood
 
 ### 2. Choose Model
-- **veo-2** (default): Stable, reliable — good for most use cases
-- **veo-3.1**: Latest model, best quality — use for premium or complex scenes
-- **veo-3.1-fast**: Faster iteration — use when exploring ideas or testing prompts
+- **veo-3.1-fast** (default): Faster iteration — good for most use cases
+- **veo-3.1**: Best quality — use for premium or complex scenes
 
 Ask the user which model to use if they haven't specified.
 

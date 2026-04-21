@@ -47,8 +47,8 @@ Use this skill when working on visual design tasks — image generation, UI mock
 | Iterative editing | Gemini Flash | Multi-turn editing support |
 | Final production assets | Imagen 4 | Highest quality output |
 | Design analysis | Gemini Flash | Multimodal understanding |
-| Short video clips | Veo 2 | Stable, reliable |
-| High-quality video | Veo 3.1 | Latest features |
+| Short video clips | Veo 3.1 Fast | Faster iteration, good quality |
+| High-quality video | Veo 3.1 | Best quality, latest features |
 
 ## Template Categories
 

@@ -214,8 +214,8 @@ class GeminiVisualDesignServer:
                             "model": {
                                 "type": "string",
                                 "enum": MODEL_CHOICES_VIDEO,
-                                "default": "veo-2",
-                                "description": "Video model: 'veo-2' (stable), 'veo-3.1' (latest), 'veo-3.1-fast'",
+                                "default": "veo-3.1-fast",
+                                "description": "Video model: 'veo-3.1' (best quality) or 'veo-3.1-fast' (faster iteration)",
                             },
                             "reference_image": {
                                 "type": "string",
@@ -451,7 +451,7 @@ class GeminiVisualDesignServer:
             result = await generate_video(
                 client=client,
                 prompt=args["prompt"],
-                model=args.get("model", "veo-2"),
+                model=args.get("model", "veo-3.1-fast"),
                 reference_image=args.get("reference_image"),
                 cwd=self._cwd(),
             )

@@ -25,7 +25,7 @@ class TestGenerateVideo:
                 result = await generate_video(
                     client=mock_client,
                     prompt="A slow camera pan across a mountain landscape at sunrise",
-                    model="veo-2",
+                    model="veo-3.1-fast",
                     cwd=str(tmp_path),
                     use_profile=False,
                 )
@@ -33,7 +33,7 @@ class TestGenerateVideo:
         mock_client.generate_video.assert_called_once()
         mock_client.poll_video_operation.assert_called_once_with(mock_operation)
         assert "path" in result
-        assert result["model"] == "veo-2"
+        assert result["model"] == "veo-3.1-fast"
         assert "enhanced_prompt" in result
         assert "warnings" in result
 
@@ -55,7 +55,7 @@ class TestGenerateVideo:
                 await generate_video(
                     client=mock_client,
                     prompt="Animate this scene with gentle motion",
-                    model="veo-2",
+                    model="veo-3.1-fast",
                     reference_image=str(ref_img),
                     cwd=str(tmp_path),
                     use_profile=False,

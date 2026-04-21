@@ -13,7 +13,6 @@ from .config import (
     GEMINI_FLASH_IMAGE,
     GEMINI_FLASH_TEXT,
     IMAGEN_MODEL,
-    VEO_2_MODEL,
     VEO_3_FAST_MODEL,
     VEO_3_MODEL,
 )
@@ -27,7 +26,6 @@ MAX_DELAY = 30.0
 
 # Map friendly model names to API model IDs
 VIDEO_MODEL_MAP = {
-    "veo-2": VEO_2_MODEL,
     "veo-3.1": VEO_3_MODEL,
     "veo-3.1-fast": VEO_3_FAST_MODEL,
 }
@@ -325,7 +323,7 @@ class GeminiClient:
     async def generate_video(
         self,
         prompt: str,
-        model: str = "veo-2",
+        model: str = "veo-3.1-fast",
         image_data: Optional[bytes] = None,
         image_mime_type: Optional[str] = None,
     ) -> Any:
@@ -333,11 +331,11 @@ class GeminiClient:
 
         Args:
             prompt: Video description
-            model: One of "veo-2", "veo-3.1", "veo-3.1-fast"
+            model: One of "veo-3.1", "veo-3.1-fast"
             image_data: Optional reference image bytes
             image_mime_type: MIME type of reference image
         """
-        model_id = VIDEO_MODEL_MAP.get(model, VEO_2_MODEL)
+        model_id = VIDEO_MODEL_MAP.get(model, VEO_3_FAST_MODEL)
 
         def _call():
             # Veo accepts a prompt alongside an image input — passing both lets
@@ -372,8 +370,11 @@ class GeminiClient:
         """
 
         def _poll():
+            nonlocal operation
             start = time.monotonic()
-            # Poll until complete
+            # Poll until complete. The google-genai SDK's operation objects are
+            # immutable pydantic models — fetch the updated state via
+            # client.operations.get() rather than mutating in place.
             while not operation.done:
                 if time.monotonic() - start > timeout_seconds:
                     raise GeminiClientError(
@@ -381,7 +382,7 @@ class GeminiClient:
                         "The operation may still be running — try again later."
                     )
                 time.sleep(5)
-                operation.reload()
+                operation = self._client.operations.get(operation)
 
             if operation.response and operation.response.generated_videos:
                 results = []

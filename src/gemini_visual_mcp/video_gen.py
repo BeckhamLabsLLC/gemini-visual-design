@@ -1,6 +1,6 @@
 """Video generation via Veo with async polling.
 
-Supports Veo 2, Veo 3.1, and Veo 3.1 Fast models.
+Supports Veo 3.1 and Veo 3.1 Fast models.
 Generates short video clips with prompt enhancement.
 """
 
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 async def generate_video(
     client: GeminiClient,
     prompt: str,
-    model: str = "veo-2",
+    model: str = "veo-3.1-fast",
     reference_image: Optional[str] = None,
     cwd: str = ".",
     use_profile: bool = True,
@@ -29,7 +29,7 @@ async def generate_video(
     Args:
         client: GeminiClient instance
         prompt: Video description
-        model: "veo-2", "veo-3.1", or "veo-3.1-fast"
+        model: "veo-3.1" or "veo-3.1-fast"
         reference_image: Optional path to a reference image
         cwd: Current working directory for style profile
         use_profile: Whether to apply style profile to prompt

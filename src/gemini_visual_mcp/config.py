@@ -15,7 +15,6 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_FLASH_IMAGE = "gemini-3.1-flash-image-preview"
 GEMINI_FLASH_TEXT = "gemini-2.5-flash"
 IMAGEN_MODEL = "imagen-4.0-generate-001"
-VEO_2_MODEL = "veo-2.0-generate-001"
 VEO_3_MODEL = "veo-3.1-generate-preview"
 VEO_3_FAST_MODEL = "veo-3.1-fast-generate-preview"
 
@@ -59,7 +58,7 @@ VIDEO_RESOLUTIONS = ["720p", "1080p"]
 
 # Model selection labels
 MODEL_CHOICES_IMAGE = ["gemini", "imagen", "auto"]
-MODEL_CHOICES_VIDEO = ["veo-2", "veo-3.1", "veo-3.1-fast"]
+MODEL_CHOICES_VIDEO = ["veo-3.1", "veo-3.1-fast"]
 
 # Analysis focus areas
 ANALYSIS_FOCUS_AREAS = ["color", "layout", "typography", "overall"]

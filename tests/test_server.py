@@ -76,7 +76,7 @@ class TestToolRouting:
         with patch("gemini_visual_mcp.server.generate_video") as mock_video:
             mock_video.return_value = {
                 "path": "/tmp/video.mp4",
-                "model": "veo-2",
+                "model": "veo-3.1-fast",
                 "enhanced_prompt": "enhanced",
                 "warnings": [],
             }
@@ -85,7 +85,7 @@ class TestToolRouting:
             })
 
         assert result["video_path"] == "/tmp/video.mp4"
-        assert result["model"] == "veo-2"
+        assert result["model"] == "veo-3.1-fast"
 
     @pytest.mark.asyncio
     async def test_save_asset(self, server):
