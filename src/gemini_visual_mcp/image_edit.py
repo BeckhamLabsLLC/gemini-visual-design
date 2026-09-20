@@ -7,6 +7,7 @@ results to preserve what works and change what doesn't.
 import logging
 
 from .asset_manager import save_generated
+from .config import DEFAULT_IMAGE_TIER, IMAGE_MODELS, resolve_image_tier
 from .gemini_client import GeminiClient
 from .image_utils import read_image
 from .style_profile import apply_to_prompt, load_profile
@@ -20,6 +21,7 @@ async def edit_image(
     instruction: str,
     cwd: str = ".",
     preserve_style: bool = True,
+    model: str = DEFAULT_IMAGE_TIER,
 ) -> dict:
     """Edit an existing image with natural language instruction.
 
@@ -31,10 +33,15 @@ async def edit_image(
         instruction: Natural language edit instruction
         cwd: Current working directory (for finding style profile)
         preserve_style: Whether to apply style profile context to the edit
+        model: Image tier to edit with (draft/fast/pro)
 
     Returns:
         Dict with: path, original_path, instruction, enhanced_instruction, model
     """
+    tier, _alias_warning = resolve_image_tier(model)
+    if tier == "auto":
+        tier = DEFAULT_IMAGE_TIER
+
     # Read the original image
     image_data, mime_type = read_image(image_path)
 
@@ -56,15 +63,18 @@ async def edit_image(
         image_data=image_data,
         mime_type=mime_type,
         instruction=full_instruction,
+        tier=tier,
     )
 
     # Save the edited result
     result = results[0]
+    model_used = result.get("model") or IMAGE_MODELS[tier]
     metadata = {
         "prompt": instruction,
         "enhanced_prompt": enhanced_instruction,
         "original_path": image_path,
-        "model": "gemini-2.5-flash-image",
+        "model": model_used,
+        "tier": tier,
         "operation": "edit",
         "preserve_style": preserve_style,
     }
@@ -81,6 +91,7 @@ async def edit_image(
         "original_path": image_path,
         "instruction": instruction,
         "enhanced_instruction": enhanced_instruction,
-        "model": "gemini-2.5-flash-image",
+        "model": model_used,
+        "tier": tier,
         "text": result.get("text"),
     }

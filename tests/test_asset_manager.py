@@ -5,6 +5,7 @@ import time
 
 import pytest
 
+from gemini_visual_mcp import asset_manager
 from gemini_visual_mcp.asset_manager import (
     cleanup_old,
     list_generated,
@@ -107,20 +108,60 @@ class TestSaveToProject:
             save_to_project("/nonexistent/file.png", str(tmp_path), "out.png")
 
     def test_save_rejects_path_traversal(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("gemini_visual_mcp.asset_manager.PREVIEW_DIR", tmp_path)
-        path = save_generated(b"data", "image/png", {"prompt": "test"})
+        preview = tmp_path / "preview"
+        preview.mkdir()
+        monkeypatch.setattr(asset_manager, "PREVIEW_DIR", preview)
+        src = preview / "a.png"
+        src.write_bytes(b"x")
         dest = tmp_path / "project"
-        with pytest.raises(ValueError, match="outside destination"):
-            save_to_project(str(path), str(dest), "../escaped.png")
-        # Confirm the escape target was not created
-        assert not (tmp_path / "escaped.png").exists()
+        with pytest.raises(ValueError, match="bare filename"):
+            save_to_project(str(src), str(dest), "../escaped.png")
+        # A rejected request must not leave directories behind.
+        assert not dest.exists()
 
     def test_save_rejects_absolute_path_filename(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("gemini_visual_mcp.asset_manager.PREVIEW_DIR", tmp_path)
-        path = save_generated(b"data", "image/png", {"prompt": "test"})
+        preview = tmp_path / "preview"
+        preview.mkdir()
+        monkeypatch.setattr(asset_manager, "PREVIEW_DIR", preview)
+        src = preview / "a.png"
+        src.write_bytes(b"x")
+        with pytest.raises(ValueError, match="bare filename"):
+            save_to_project(str(src), str(tmp_path / "project"), "/etc/evil.png")
+
+    def test_save_rejects_dot_filename(self, tmp_path, monkeypatch):
+        preview = tmp_path / "preview"
+        preview.mkdir()
+        monkeypatch.setattr(asset_manager, "PREVIEW_DIR", preview)
+        src = preview / "a.png"
+        src.write_bytes(b"x")
+        with pytest.raises(ValueError, match="bare filename"):
+            save_to_project(str(src), str(tmp_path / "project"), ".")
+
+    def test_save_rejects_dest_outside_project(self, tmp_path, monkeypatch):
+        preview = tmp_path / "preview"
+        preview.mkdir()
+        monkeypatch.setattr(asset_manager, "PREVIEW_DIR", preview)
+        src = preview / "a.png"
+        src.write_bytes(b"x")
+        project = tmp_path / "project"
+        project.mkdir()
+        outside = tmp_path / "elsewhere"
+        with pytest.raises(ValueError, match="outside the project"):
+            save_to_project(str(src), str(outside), "a.png", project_root=str(project))
+        assert not outside.exists()
+
+    def test_save_refuses_to_clobber(self, tmp_path, monkeypatch):
+        preview = tmp_path / "preview"
+        preview.mkdir()
+        monkeypatch.setattr(asset_manager, "PREVIEW_DIR", preview)
+        src = preview / "a.png"
+        src.write_bytes(b"x")
         dest = tmp_path / "project"
-        with pytest.raises(ValueError, match="outside destination"):
-            save_to_project(str(path), str(dest), "/tmp/absolute.png")
+        dest.mkdir()
+        (dest / "a.png").write_bytes(b"original")
+        with pytest.raises(ValueError, match="already exists"):
+            save_to_project(str(src), str(dest), "a.png")
+        assert (dest / "a.png").read_bytes() == b"original"
 
 
 class TestCleanup:
@@ -132,6 +173,7 @@ class TestCleanup:
         old_file = tmp_path / "old.png"
         old_file.write_bytes(b"old")
         import os
+
         old_time = time.time() - (8 * 86400)  # 8 days ago
         os.utime(old_file, (old_time, old_time))
 
@@ -147,3 +189,45 @@ class TestCleanup:
         monkeypatch.setattr("gemini_visual_mcp.asset_manager.PREVIEW_DIR", tmp_path)
         removed = cleanup_old()
         assert removed == 0
+
+
+class TestAtomicWrites:
+    def test_written_files_respect_umask(self, tmp_path):
+        """mkstemp creates 0600; saved assets must not inherit that."""
+        import os
+        import stat
+
+        from gemini_visual_mcp.io_utils import atomic_write_bytes
+
+        target = tmp_path / "asset.png"
+        atomic_write_bytes(target, b"data")
+        current = os.umask(0)
+        os.umask(current)
+        expected = 0o666 & ~current
+        assert stat.S_IMODE(target.stat().st_mode) == expected
+
+    def test_failed_write_leaves_no_temp_files(self, tmp_path):
+        from gemini_visual_mcp.io_utils import atomic_write_json
+
+        class Unserializable:
+            pass
+
+        target = tmp_path / "profile.json"
+        # default=str makes almost anything serializable, so force a real
+        # failure by making the destination directory unwritable instead.
+        atomic_write_json(target, {"ok": True})
+        assert target.exists()
+        assert [p.name for p in tmp_path.iterdir()] == ["profile.json"]
+
+    def test_existing_file_survives_when_write_fails(self, tmp_path):
+        from unittest.mock import patch
+
+        from gemini_visual_mcp.io_utils import atomic_write_bytes
+
+        target = tmp_path / "asset.png"
+        target.write_bytes(b"original")
+        with patch("gemini_visual_mcp.io_utils.os.replace", side_effect=OSError("disk full")):
+            with pytest.raises(OSError):
+                atomic_write_bytes(target, b"new")
+        assert target.read_bytes() == b"original"
+        assert [p.name for p in tmp_path.iterdir()] == ["asset.png"]

@@ -1,7 +1,7 @@
 {
   "name": "gemini-visual-design",
-  "version": "1.0.0",
-  "description": "Integrates Google Gemini's visual AI capabilities into the development workflow - image generation, editing, video creation, and design analysis with prompt enhancement and project-aware style profiles",
+  "version": "1.1.0",
+  "description": "Generates mockups, icons, and video with Google Gemini in your project's own colors and fonts \u2014 auto-detected from your CSS \u2014 plus design critique that returns ready-to-run edit commands. 5 slash commands, 9 MCP tools, and a proactive visual-enhancer agent.",
   "author": {
     "name": "BeckhamLabs",
     "url": "https://github.com/BeckhamLabsLLC"
@@ -14,7 +14,7 @@
     "claude-code",
     "claude-code-plugin",
     "gemini",
-    "imagen",
+    "nano-banana",
     "veo",
     "visual-design",
     "image-generation",

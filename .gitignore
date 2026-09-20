@@ -32,3 +32,5 @@ Thumbs.db
 # Project-specific
 .claude/settings.local.json
 *.log
+smoke-out/
+.ruff_cache/

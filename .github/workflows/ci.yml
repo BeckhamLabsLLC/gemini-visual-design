@@ -28,7 +28,7 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Run tests
-        run: pytest tests/ -v
+        run: pytest tests/ -v --cov=gemini_visual_mcp --cov-report=term-missing --cov-fail-under=80
 
   lint:
     runs-on: ubuntu-latest
@@ -46,3 +46,26 @@ jobs:
 
       - name: Lint
         run: ruff check src/ tests/
+
+      - name: Check formatting
+        run: ruff format --check src/ tests/
+
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check version consistency
+        run: |
+          set -euo pipefail
+          plugin=$(python -c "import json;print(json.load(open('.claude-plugin/plugin.json'))['version'])")
+          market=$(python -c "import json;print(json.load(open('.claude-plugin/marketplace.json'))['plugins'][0]['version'])")
+          pyproj=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)
+          dunder=$(grep -m1 '__version__ = ' src/gemini_visual_mcp/__init__.py | cut -d'"' -f2)
+          echo "plugin=$plugin marketplace=$market pyproject=$pyproj __version__=$dunder"
+          test "$plugin" = "$market" && test "$plugin" = "$pyproj" && test "$plugin" = "$dunder"
+
+      - name: Validate plugin manifest
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude plugin validate .

@@ -4,20 +4,20 @@ build-backend = "hatchling.build"
 
 [project]
 name = "gemini-visual-design"
-version = "1.0.0"
+version = "1.1.0"
 description = "MCP server for visual design with Google Gemini - image generation, editing, video creation, and design analysis"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
-    { name = "Austin Beck" }
+    { name = "BeckhamLabs", email = "alexnbeckham@gmail.com" }
 ]
 keywords = [
     "mcp",
     "claude-code",
     "claude-code-plugin",
     "gemini",
-    "imagen",
+    "nano-banana",
     "veo",
     "visual-design",
     "image-generation",
@@ -41,14 +41,16 @@ classifiers = [
 ]
 dependencies = [
     "mcp>=1.0.0",
-    "google-genai>=1.0.0",
-    "Pillow>=10.0.0",
+    # 1.60 is the floor for GenerateContentConfig.image_config.
+    "google-genai>=1.60",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.0.0",
+    "pytest-timeout>=2.0.0",
     "ruff>=0.1.0",
 ]
 
@@ -64,9 +66,18 @@ include = [
     "/README.md",
 ]
 
+[project.urls]
+Homepage = "https://github.com/BeckhamLabsLLC/gemini-visual-design"
+Repository = "https://github.com/BeckhamLabsLLC/gemini-visual-design"
+Issues = "https://github.com/BeckhamLabsLLC/gemini-visual-design/issues"
+Changelog = "https://github.com/BeckhamLabsLLC/gemini-visual-design/blob/main/CHANGELOG.md"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+# Nothing in the suite should reach the network or sleep for real.
+timeout = 30
 
 [tool.ruff]
 line-length = 100

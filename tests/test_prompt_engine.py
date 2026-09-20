@@ -73,9 +73,7 @@ class TestTemplates:
         assert meta["aspect_ratio"] == "16:9"
 
     def test_apply_template_with_overrides(self):
-        prompt, meta = apply_template(
-            "ui-mockups", "dashboard", {"style": "light-themed"}
-        )
+        prompt, meta = apply_template("ui-mockups", "dashboard", {"style": "light-themed"})
         assert "light-themed" in prompt
 
     def test_apply_template_unknown_category_raises(self):
@@ -145,7 +143,9 @@ class TestEnhance:
         assert "quality" in prompt.lower() or "lighting" in prompt.lower()
 
     def test_enhance_skips_hints_when_present(self):
-        original = "A dashboard with professional lighting, high quality rendering, clean organized layout"
+        original = (
+            "A dashboard with professional lighting, high quality rendering, clean organized layout"
+        )
         prompt, _ = enhance(original)
         # Should not double up on hints
         assert prompt.count("high quality") <= 1

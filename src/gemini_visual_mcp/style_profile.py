@@ -11,8 +11,12 @@ from pathlib import Path
 from typing import Optional
 
 from .config import STYLE_PROFILE_FILENAME
+from .io_utils import atomic_write_json
 
 logger = logging.getLogger(__name__)
+
+# Depth cap for the upward profile search.
+MAX_PARENT_WALK = 40
 
 DEFAULT_PROFILE = {
     "project_type": "web-app",
@@ -45,13 +49,18 @@ def find_profile(cwd: str) -> Optional[Path]:
     Returns the path to the profile file, or None if not found.
     """
     current = Path(cwd).resolve()
-    while True:
+    home = Path.home().resolve()
+    for _ in range(MAX_PARENT_WALK):
         profile_path = current / STYLE_PROFILE_FILENAME
         if profile_path.is_file():
             return profile_path
+        # Stop at the repo boundary. Walking past it used to pick up a stray
+        # profile in $HOME and inject it into every unrelated project.
+        if (current / ".git").exists() or current == home:
+            return None
         parent = current.parent
         if parent == current:
-            break
+            return None
         current = parent
     return None
 
@@ -104,10 +113,26 @@ def create_profile(
         profile["image_style"] = image_style
 
     path = Path(target_dir) / STYLE_PROFILE_FILENAME
-    with open(path, "w") as f:
-        json.dump(profile, f, indent=2)
-        f.write("\n")
 
+    # "Create or update": preserve fields the user hand-edited that we were
+    # not asked to change, instead of rebuilding from DEFAULT_PROFILE.
+    if path.is_file():
+        try:
+            with open(path) as f:
+                existing = json.load(f)
+            if isinstance(existing, dict):
+                merged = {
+                    **existing,
+                    **{k: v for k, v in profile.items() if v not in ("", {}, None)},
+                }
+                for nested in ("colors", "typography"):
+                    if isinstance(existing.get(nested), dict):
+                        merged[nested] = {**existing[nested], **profile.get(nested, {})}
+                profile = merged
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Could not merge existing profile at %s: %s", path, e)
+
+    atomic_write_json(path, profile)
     logger.info(f"Created style profile at {path}")
     return path
 
@@ -137,11 +162,50 @@ def update_profile(cwd: str, updates: dict) -> Optional[Path]:
         else:
             profile[key] = value
 
-    with open(path, "w") as f:
-        json.dump(profile, f, indent=2)
-        f.write("\n")
-
+    atomic_write_json(path, profile)
     return path
+
+
+# Directories never worth scanning for a project's own design tokens.
+SCAN_EXCLUDE = {
+    "node_modules",
+    ".git",
+    ".next",
+    "dist",
+    "build",
+    ".venv",
+    "venv",
+    "vendor",
+    "__pycache__",
+    ".turbo",
+    "coverage",
+    "out",
+}
+MAX_SCAN_FILES = 50
+MAX_SCAN_BYTES = 512 * 1024
+
+
+def _iter_css_files(project_dir: Path):
+    """Yield up to MAX_SCAN_FILES css files, skipping vendored trees."""
+    seen: set[Path] = set()
+    count = 0
+    for css_glob in ("*.css", "src/**/*.css", "app/**/*.css", "styles/**/*.css"):
+        for css_file in project_dir.glob(css_glob):
+            if count >= MAX_SCAN_FILES:
+                return
+            resolved = css_file.resolve()
+            if resolved in seen:
+                continue
+            if SCAN_EXCLUDE & set(css_file.parts):
+                continue
+            try:
+                if css_file.stat().st_size > MAX_SCAN_BYTES:
+                    continue
+            except OSError:
+                continue
+            seen.add(resolved)
+            count += 1
+            yield css_file
 
 
 def auto_detect_profile(cwd: str) -> dict:
@@ -204,48 +268,36 @@ def auto_detect_profile(cwd: str) -> dict:
                 pass
             break
 
-    # Detect CSS custom properties
-    for css_glob in ["*.css", "src/**/*.css", "app/**/*.css", "styles/**/*.css"]:
-        for css_file in project_dir.glob(css_glob):
-            try:
-                with open(css_file) as f:
-                    css_content = f.read()
-                # Look for --color-primary or --primary-color patterns
-                css_vars = re.findall(
-                    r"--(?:color-)?(\w+)(?:-color)?:\s*(#[0-9a-fA-F]{3,8})", css_content
-                )
-                for name, value in css_vars:
-                    name_lower = name.lower()
-                    if "primary" in name_lower:
-                        detected["colors"]["primary"] = value
-                    elif "secondary" in name_lower:
-                        detected["colors"]["secondary"] = value
-                    elif "background" in name_lower or "bg" in name_lower:
-                        detected["colors"]["background"] = value
-                    elif "surface" in name_lower:
-                        detected["colors"]["surface"] = value
-                    elif "text" in name_lower or "foreground" in name_lower:
-                        detected["colors"]["text"] = value
+    # Detect CSS custom properties, fonts, and dark mode in a SINGLE pass.
+    # This used to glob and fully read every CSS file twice.
+    for css_file in _iter_css_files(project_dir):
+        try:
+            css_content = css_file.read_text(errors="replace")
+        except OSError:
+            continue
 
-                # Detect font families
-                fonts = re.findall(r"font-family:\s*['\"]?([^;'\"]+)", css_content)
-                if fonts:
-                    detected["typography"]["heading_font"] = fonts[0].split(",")[0].strip("'\" ")
-            except OSError:
-                pass
+        # Look for --color-primary or --primary-color patterns
+        css_vars = re.findall(r"--(?:color-)?(\w+)(?:-color)?:\s*(#[0-9a-fA-F]{3,8})", css_content)
+        for name, value in css_vars:
+            name_lower = name.lower()
+            if "primary" in name_lower:
+                detected["colors"]["primary"] = value
+            elif "secondary" in name_lower:
+                detected["colors"]["secondary"] = value
+            elif "background" in name_lower or "bg" in name_lower:
+                detected["colors"]["background"] = value
+            elif "surface" in name_lower:
+                detected["colors"]["surface"] = value
+            elif "text" in name_lower or "foreground" in name_lower:
+                detected["colors"]["text"] = value
 
-    # Detect dark mode
-    for css_glob in ["*.css", "src/**/*.css", "app/**/*.css"]:
-        for css_file in project_dir.glob(css_glob):
-            try:
-                with open(css_file) as f:
-                    content = f.read()
-                if "prefers-color-scheme: dark" in content or "dark" in content.lower():
-                    if "dark" not in detected["visual_style"]:
-                        detected["visual_style"] += ", dark mode support"
-                    break
-            except OSError:
-                pass
+        fonts = re.findall(r"font-family:\s*['\"]?([^;'\"]+)", css_content)
+        if fonts:
+            detected["typography"]["heading_font"] = fonts[0].split(",")[0].strip("'\" ")
+
+        if "prefers-color-scheme: dark" in css_content:
+            if "dark" not in detected["visual_style"]:
+                detected["visual_style"] += ", dark mode support"
 
     return detected
 

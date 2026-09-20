@@ -19,7 +19,7 @@ Use this skill when working on visual design tasks — image generation, UI mock
 
 4. **Review and iterate** — Use `edit_image` to refine the draft. Always prefer editing over regenerating from scratch.
 
-5. **Finalize if needed** — Only use model="imagen" when the user approves a draft and needs production quality.
+5. **Finalize if needed** — Only use model="pro" when the user approves a draft and needs production quality.
 
 6. **Save to project** — Use `save_asset` to move from preview to project directory.
 
@@ -37,18 +37,23 @@ Use this skill when working on visual design tasks — image generation, UI mock
 - Use negative prompts ("no X", "don't include Y")
 - Skip the style profile when one exists
 - Regenerate from scratch when an edit would work
-- Use Imagen for drafts or iterative exploration
+- Use the `pro` tier for drafts or iterative exploration (it costs 2x `fast`)
 
 ## Model Selection Guide
 
-| Task | Model | Why |
-|------|-------|-----|
-| Draft mockups | Gemini Flash | Fast iteration, cheap |
-| Iterative editing | Gemini Flash | Multi-turn editing support |
-| Final production assets | Imagen 4 | Highest quality output |
-| Design analysis | Gemini Flash | Multimodal understanding |
-| Short video clips | Veo 3.1 Fast | Faster iteration, good quality |
-| High-quality video | Veo 3.1 | Best quality, latest features |
+| Task | `model=` | Cost | Why |
+|------|----------|------|-----|
+| Throwaway iteration | `draft` | ~$0.034/image | Cheapest; fine for composition checks |
+| Draft mockups, editing | `fast` (default) | ~$0.067/image | Good quality, multi-turn editing |
+| Final production assets | `pro` | ~$0.134/image | Legible text, highest fidelity |
+| Unsure | `auto` | varies | Picks `pro` for finals, else `fast` |
+| Design analysis | (text model) | ~$0.001 | Runs on Gemini Flash text, not an image model |
+| Short video clips | `veo-3.1-lite` | ~$0.05/sec | Cheapest video |
+| Balanced video | `veo-3.1-fast` | ~$0.10/sec | Default |
+| High-quality video | `veo-3.1` | ~$0.40/sec | Best quality |
+
+Every image tier accepts a `reference_image`, so asking for style consistency
+never forces a tier change.
 
 ## Template Categories
 

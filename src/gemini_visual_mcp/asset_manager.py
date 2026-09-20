@@ -1,17 +1,16 @@
 """Asset manager for temp previews, metadata sidecars, and project saves."""
 
-import itertools
 import json
 import logging
 import shutil
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from .config import PREVIEW_DIR, PREVIEW_MAX_AGE_DAYS
+from .io_utils import atomic_write_bytes, atomic_write_json
 
 logger = logging.getLogger(__name__)
-
-_counter = itertools.count()
 
 
 def _ensure_preview_dir() -> Path:
@@ -21,7 +20,12 @@ def _ensure_preview_dir() -> Path:
 
 
 def _generate_filename(prefix: str, mime_type: str) -> str:
-    """Generate a unique filename with timestamp and counter."""
+    """Generate a unique filename.
+
+    Uses a random suffix rather than a process-local counter: two server
+    processes generating in the same second used to produce identical names
+    and silently overwrite each other.
+    """
     ext_map = {
         "image/png": ".png",
         "image/jpeg": ".jpg",
@@ -30,8 +34,7 @@ def _generate_filename(prefix: str, mime_type: str) -> str:
     }
     ext = ext_map.get(mime_type, ".bin")
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    seq = next(_counter)
-    return f"{prefix}_{timestamp}_{seq}{ext}"
+    return f"{prefix}_{timestamp}_{uuid.uuid4().hex[:8]}{ext}"
 
 
 def save_generated(
@@ -56,8 +59,7 @@ def save_generated(
     file_path = preview_dir / filename
 
     # Save the content
-    with open(file_path, "wb") as f:
-        f.write(data)
+    atomic_write_bytes(file_path, data)
 
     # Save metadata sidecar
     meta_path = preview_dir / f"{filename}.meta.json"
@@ -68,9 +70,7 @@ def save_generated(
         "filename": filename,
         **metadata,
     }
-    with open(meta_path, "w") as f:
-        json.dump(meta, f, indent=2)
-        f.write("\n")
+    atomic_write_json(meta_path, meta)
 
     logger.info(f"Saved generated asset: {file_path} ({len(data)} bytes)")
     return file_path
@@ -84,13 +84,13 @@ def list_generated() -> list[dict]:
     preview_dir = _ensure_preview_dir()
     results = []
 
-    for meta_file in sorted(preview_dir.glob("*.meta.json")):
+    for meta_file in preview_dir.glob("*.meta.json"):
         try:
             with open(meta_file) as f:
                 meta = json.load(f)
 
             # Check that the actual file still exists
-            asset_name = meta.get("filename", meta_file.stem)
+            asset_name = meta.get("filename") or meta_file.name.removesuffix(".meta.json")
             asset_path = preview_dir / asset_name
             if not asset_path.exists():
                 continue
@@ -111,50 +111,69 @@ def list_generated() -> list[dict]:
         except (json.JSONDecodeError, OSError):
             continue
 
+    results.sort(key=lambda r: r.get("timestamp", ""))
     return results
 
 
-def save_to_project(temp_path: str, dest_dir: str, filename: str) -> Path:
-    """Copy a generated asset from preview to project directory.
+def save_to_project(
+    temp_path: str,
+    dest_dir: str,
+    filename: str,
+    project_root: str | None = None,
+) -> Path:
+    """Copy a generated asset from preview into the project.
 
     Args:
-        temp_path: Path to the file in preview directory
-        dest_dir: Target directory in the project
-        filename: Desired filename (must not escape dest_dir)
+        temp_path: Path to the file in the preview directory
+        dest_dir: Target directory; relative paths resolve against project_root
+        filename: A bare filename - no separators, no traversal
+        project_root: If given, dest_dir must resolve inside it
 
     Returns:
-        Path to the saved file in the project
+        Path to the saved file
 
     Raises:
         FileNotFoundError: If the source file does not exist.
-        ValueError: If filename would resolve outside dest_dir.
+        ValueError: If filename or dest_dir is unacceptable.
     """
     source = Path(temp_path)
     if not source.is_file():
         raise FileNotFoundError(f"Source file not found: {temp_path}")
 
-    dest = Path(dest_dir)
-    dest.mkdir(parents=True, exist_ok=True)
-    dest_resolved = dest.resolve()
-
-    target = (dest / filename).resolve()
-    if dest_resolved not in target.parents and target != dest_resolved:
+    # One check kills "..", ".", "sub/x.png", "/abs/x" and "".
+    if filename in ("", ".", "..") or Path(filename).name != filename:
         raise ValueError(
-            f"Filename {filename!r} resolves outside destination directory {dest_dir!r}"
+            f"filename must be a bare filename with no path separators, got {filename!r}"
         )
 
+    dest = Path(dest_dir).expanduser()
+    if project_root:
+        root = Path(project_root).expanduser().resolve()
+        if not dest.is_absolute():
+            dest = root / dest
+        dest_resolved = dest.resolve()
+        if dest_resolved != root and root not in dest_resolved.parents:
+            raise ValueError(
+                f"destination_dir {dest_dir!r} resolves outside the project "
+                f"({dest_resolved}). Choose a directory inside {root}."
+            )
+    else:
+        dest_resolved = dest.resolve()
+
+    target = dest_resolved / filename
+    if target.exists():
+        raise ValueError(
+            f"{target} already exists. Choose a different filename so an "
+            "existing asset isn't overwritten."
+        )
+
+    # Only create directories once the request is known to be acceptable.
+    dest_resolved.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
 
-    # Also copy metadata if it exists. The same containment rules apply so a
-    # malicious filename can't smuggle a sidecar into a parent directory.
     meta_source = source.parent / f"{source.name}.meta.json"
     if meta_source.is_file():
-        meta_target = (dest / f"{filename}.meta.json").resolve()
-        if dest_resolved not in meta_target.parents and meta_target != dest_resolved:
-            raise ValueError(
-                f"Sidecar for {filename!r} resolves outside destination directory"
-            )
-        shutil.copy2(meta_source, meta_target)
+        shutil.copy2(meta_source, dest_resolved / f"{filename}.meta.json")
 
     logger.info(f"Saved asset to project: {target}")
     return target

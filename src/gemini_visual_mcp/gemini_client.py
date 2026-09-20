@@ -6,28 +6,49 @@ import time
 from typing import Any, Optional
 
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
 
 from .config import (
+    API_TIMEOUT_MS,
     GEMINI_API_KEY,
-    GEMINI_FLASH_IMAGE,
     GEMINI_FLASH_TEXT,
-    IMAGEN_MODEL,
+    IMAGE_MODELS,
     VEO_3_FAST_MODEL,
+    VEO_3_LITE_MODEL,
     VEO_3_MODEL,
+    VIDEO_POLL_TIMEOUT_SECONDS,
 )
 
 logger = logging.getLogger(__name__)
 
-# Retry configuration
+# Retry configuration for the thin backoff we still do ourselves around
+# long-running video polling. Ordinary request retries are handled by the SDK.
 MAX_RETRIES = 3
 BASE_DELAY = 1.0
 MAX_DELAY = 30.0
+
+# HTTP status codes worth retrying. Notably absent: 400 and 404. Retrying a
+# malformed request or a retired model id just burns time before failing.
+RETRYABLE_STATUS = [408, 429, 500, 502, 503, 504]
 
 # Map friendly model names to API model IDs
 VIDEO_MODEL_MAP = {
     "veo-3.1": VEO_3_MODEL,
     "veo-3.1-fast": VEO_3_FAST_MODEL,
+    "veo-3.1-lite": VEO_3_LITE_MODEL,
+}
+
+# finish_reason values that mean the model refused rather than failed.
+BLOCKED_FINISH_REASONS = {
+    "SAFETY",
+    "PROHIBITED_CONTENT",
+    "IMAGE_SAFETY",
+    "IMAGE_PROHIBITED_CONTENT",
+    "BLOCKLIST",
+    "SPII",
+    "RECITATION",
+    "IMAGE_RECITATION",
 }
 
 
@@ -55,6 +76,64 @@ class GeminiContentPolicyError(GeminiClientError):
     pass
 
 
+def _looks_like_policy_block(err: genai_errors.APIError) -> bool:
+    text = f"{getattr(err, 'message', '')} {getattr(err, 'details', '')}".lower()
+    return any(token in text for token in ("safety", "prohibited_content", "blocklist", "blocked"))
+
+
+def _extract_parts(response: Any) -> tuple[list[dict], list[str]]:
+    """Pull inline images and text out of a generate_content response.
+
+    Returns (images, texts). Raises GeminiContentPolicyError when the model
+    refused, so callers get an actionable message instead of a bare
+    "no image data".
+    """
+    images: list[dict] = []
+    texts: list[str] = []
+
+    for candidate in getattr(response, "candidates", None) or []:
+        reason = str(getattr(candidate, "finish_reason", "") or "").upper()
+        reason = reason.rsplit(".", 1)[-1]
+        if reason in BLOCKED_FINISH_REASONS:
+            raise GeminiContentPolicyError(
+                f"Gemini refused this request (finish_reason={reason}). "
+                "Rephrase the prompt and try again."
+            )
+        content = getattr(candidate, "content", None)
+        for part in getattr(content, "parts", None) or []:
+            inline = getattr(part, "inline_data", None)
+            if inline is not None and getattr(inline, "data", None):
+                images.append({"data": inline.data, "mime_type": inline.mime_type})
+            elif getattr(part, "text", None):
+                texts.append(part.text)
+
+    feedback = getattr(response, "prompt_feedback", None)
+    block_reason = getattr(feedback, "block_reason", None)
+    if block_reason and not images and not texts:
+        raise GeminiContentPolicyError(
+            f"Prompt blocked before generation (block_reason={block_reason})."
+        )
+
+    return images, texts
+
+
+def _require_images(images: list[dict], texts: list[str], what: str) -> list[dict]:
+    if images:
+        if texts:
+            images[0]["text"] = "\n".join(texts)
+        return images
+    if texts:
+        raise GeminiClientError(f"Model returned text instead of {what}: {' '.join(texts)}")
+    raise GeminiClientError(f"No {what} data in response")
+
+
+def _first_text(response: Any, what: str) -> str:
+    _, texts = _extract_parts(response)
+    if texts:
+        return "\n".join(texts)
+    raise GeminiClientError(f"No {what} in response")
+
+
 class GeminiClient:
     """Wrapper around the google-genai SDK for Gemini API operations."""
 
@@ -65,146 +144,95 @@ class GeminiClient:
                 "GEMINI_API_KEY environment variable not set. "
                 "Get your API key at https://aistudio.google.com/apikey"
             )
-        self._client = genai.Client(api_key=self._api_key)
+        self._client = genai.Client(
+            api_key=self._api_key,
+            http_options=types.HttpOptions(
+                timeout=API_TIMEOUT_MS,
+                retry_options=types.HttpRetryOptions(
+                    attempts=MAX_RETRIES,
+                    initial_delay=BASE_DELAY,
+                    max_delay=MAX_DELAY,
+                    http_status_codes=RETRYABLE_STATUS,
+                ),
+            ),
+        )
 
     def _sync_call(self, func, *args, **kwargs) -> Any:
-        """Execute a sync SDK call with retry logic."""
-        last_error = None
-        for attempt in range(MAX_RETRIES):
-            try:
-                return func(*args, **kwargs)
-            except Exception as e:
-                last_error = e
-                error_str = str(e).lower()
+        """Run a sync SDK call, translating SDK errors into our own types.
 
-                if "api key" in error_str or "authentication" in error_str or "401" in error_str:
-                    raise GeminiAuthError(f"Authentication failed: {e}") from e
+        Transport-level retry is configured on the client, so this only
+        classifies what comes back out.
+        """
+        try:
+            return func(*args, **kwargs)
+        except genai_errors.ClientError as e:
+            code = getattr(e, "code", None)
+            if code in (401, 403):
+                raise GeminiAuthError(f"Authentication failed: {e}") from e
+            if code == 429:
+                raise GeminiQuotaError(f"API quota exceeded: {e}") from e
+            if _looks_like_policy_block(e):
+                raise GeminiContentPolicyError(f"Content blocked by safety policy: {e}") from e
+            raise GeminiClientError(f"Request rejected by the Gemini API: {e}") from e
+        except genai_errors.ServerError as e:
+            raise GeminiClientError(f"Gemini API is unavailable: {e}") from e
+        except GeminiClientError:
+            raise
+        except Exception as e:
+            raise GeminiClientError(f"Unexpected error calling the Gemini API: {e}") from e
 
-                if "safety" in error_str or "blocked" in error_str or "policy" in error_str:
-                    raise GeminiContentPolicyError(
-                        f"Content blocked by safety policy: {e}"
-                    ) from e
-
-                if "429" in error_str or "quota" in error_str:
-                    if attempt == MAX_RETRIES - 1:
-                        raise GeminiQuotaError(
-                            f"API quota exceeded after {MAX_RETRIES} retries: {e}"
-                        ) from e
-
-                delay = min(BASE_DELAY * (2**attempt), MAX_DELAY)
-                logger.warning(
-                    f"Retry {attempt + 1}/{MAX_RETRIES} after error: {e}. "
-                    f"Waiting {delay:.1f}s"
-                )
-                time.sleep(delay)
-
-        raise GeminiClientError(f"Failed after {MAX_RETRIES} retries: {last_error}")
+    def _image_config(
+        self, aspect_ratio: str | None, resolution: str | None
+    ) -> types.GenerateContentConfig:
+        image_config = None
+        if aspect_ratio or resolution:
+            image_config = types.ImageConfig(
+                aspect_ratio=aspect_ratio,
+                image_size=resolution,
+            )
+        return types.GenerateContentConfig(
+            response_modalities=["TEXT", "IMAGE"],
+            image_config=image_config,
+        )
 
     async def generate_image_gemini(
         self,
         prompt: str,
-        aspect_ratio: str = "16:9",
+        tier: str = "fast",
+        aspect_ratio: str | None = None,
+        resolution: str | None = None,
         reference_image_data: bytes | None = None,
         reference_mime_type: str | None = None,
     ) -> list[dict]:
-        """Generate image(s) using Gemini native image generation.
+        """Generate one image with the given tier's model.
 
-        Uses responseModalities: ["TEXT", "IMAGE"] to get inline image data.
-        When reference_image_data is provided, the image is sent alongside the
-        prompt so the model can match its style.
-
-        Returns list of dicts with keys: 'data' (bytes), 'mime_type' (str), 'text' (str|None)
+        All tiers use generate_content, so every tier accepts a reference
+        image. Returns a list of dicts with keys 'data', 'mime_type',
+        optionally 'text', and 'model' (as reported by the server).
         """
+        model_id = IMAGE_MODELS[tier]
 
         def _call():
             if reference_image_data and reference_mime_type:
                 contents = [
-                    types.Part.from_bytes(
-                        data=reference_image_data, mime_type=reference_mime_type
-                    ),
+                    types.Part.from_bytes(data=reference_image_data, mime_type=reference_mime_type),
                     prompt,
                 ]
             else:
                 contents = prompt
 
-            response = self._client.models.generate_content(
-                model=GEMINI_FLASH_IMAGE,
+            return self._client.models.generate_content(
+                model=model_id,
                 contents=contents,
-                config=types.GenerateContentConfig(
-                    response_modalities=["TEXT", "IMAGE"],
-                ),
+                config=self._image_config(aspect_ratio, resolution),
             )
-            return response
 
         response = await asyncio.to_thread(self._sync_call, _call)
-
-        results = []
-        text_parts = []
-
-        if response.candidates:
-            for candidate in response.candidates:
-                if candidate.content and candidate.content.parts:
-                    for part in candidate.content.parts:
-                        if part.inline_data:
-                            results.append(
-                                {
-                                    "data": part.inline_data.data,
-                                    "mime_type": part.inline_data.mime_type,
-                                }
-                            )
-                        elif part.text:
-                            text_parts.append(part.text)
-
-        # Attach any text response to the first result
-        if results and text_parts:
-            results[0]["text"] = "\n".join(text_parts)
-        elif not results and text_parts:
-            # Model returned text only (e.g. explaining why it can't generate)
-            raise GeminiClientError(
-                f"Model returned text instead of image: {' '.join(text_parts)}"
-            )
-        elif not results:
-            raise GeminiClientError("No image data in response")
-
-        return results
-
-    async def generate_image_imagen(
-        self,
-        prompt: str,
-        count: int = 1,
-        aspect_ratio: str = "16:9",
-    ) -> list[dict]:
-        """Generate image(s) using Imagen 4.
-
-        Returns list of dicts with keys: 'data' (bytes), 'mime_type' (str)
-        """
-
-        def _call():
-            response = self._client.models.generate_images(
-                model=IMAGEN_MODEL,
-                prompt=prompt,
-                config=types.GenerateImagesConfig(
-                    number_of_images=count,
-                    aspect_ratio=aspect_ratio,
-                ),
-            )
-            return response
-
-        response = await asyncio.to_thread(self._sync_call, _call)
-
-        results = []
-        if response.generated_images:
-            for img in response.generated_images:
-                results.append(
-                    {
-                        "data": img.image.image_bytes,
-                        "mime_type": "image/png",
-                    }
-                )
-
-        if not results:
-            raise GeminiClientError("No images generated by Imagen")
-
+        images, texts = _extract_parts(response)
+        results = _require_images(images, texts, "image")
+        reported = getattr(response, "model_version", None) or model_id
+        for item in results:
+            item["model"] = reported
         return results
 
     async def edit_image_gemini(
@@ -212,55 +240,27 @@ class GeminiClient:
         image_data: bytes,
         mime_type: str,
         instruction: str,
+        tier: str = "fast",
     ) -> list[dict]:
-        """Edit an image using Gemini's multi-turn image understanding.
-
-        Sends the image + edit instruction and returns the edited image.
-
-        Returns list of dicts with keys: 'data' (bytes), 'mime_type' (str), 'text' (str|None)
-        """
+        """Edit an image using Gemini's multi-turn image understanding."""
+        model_id = IMAGE_MODELS[tier]
 
         def _call():
-            response = self._client.models.generate_content(
-                model=GEMINI_FLASH_IMAGE,
+            return self._client.models.generate_content(
+                model=model_id,
                 contents=[
                     types.Part.from_bytes(data=image_data, mime_type=mime_type),
                     instruction,
                 ],
-                config=types.GenerateContentConfig(
-                    response_modalities=["TEXT", "IMAGE"],
-                ),
+                config=types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"]),
             )
-            return response
 
         response = await asyncio.to_thread(self._sync_call, _call)
-
-        results = []
-        text_parts = []
-
-        if response.candidates:
-            for candidate in response.candidates:
-                if candidate.content and candidate.content.parts:
-                    for part in candidate.content.parts:
-                        if part.inline_data:
-                            results.append(
-                                {
-                                    "data": part.inline_data.data,
-                                    "mime_type": part.inline_data.mime_type,
-                                }
-                            )
-                        elif part.text:
-                            text_parts.append(part.text)
-
-        if results and text_parts:
-            results[0]["text"] = "\n".join(text_parts)
-        elif not results and text_parts:
-            raise GeminiClientError(
-                f"Model returned text instead of edited image: {' '.join(text_parts)}"
-            )
-        elif not results:
-            raise GeminiClientError("No edited image data in response")
-
+        images, texts = _extract_parts(response)
+        results = _require_images(images, texts, "edited image")
+        reported = getattr(response, "model_version", None) or model_id
+        for item in results:
+            item["model"] = reported
         return results
 
     async def analyze_image(
@@ -268,57 +268,42 @@ class GeminiClient:
         image_data: bytes,
         mime_type: str,
         analysis_prompt: str,
+        response_schema: Any | None = None,
     ) -> str:
-        """Analyze an image with a text prompt. Returns text analysis."""
+        """Analyze an image with a text prompt. Returns text analysis.
+
+        Runs on the text model: this produces a critique, not an image, and
+        the image-generation models cost far more for the same job.
+        """
 
         def _call():
-            response = self._client.models.generate_content(
-                model=GEMINI_FLASH_IMAGE,
+            config = types.GenerateContentConfig(response_modalities=["TEXT"])
+            if response_schema is not None:
+                config.response_mime_type = "application/json"
+                config.response_schema = response_schema
+            return self._client.models.generate_content(
+                model=GEMINI_FLASH_TEXT,
                 contents=[
                     types.Part.from_bytes(data=image_data, mime_type=mime_type),
                     analysis_prompt,
                 ],
-                config=types.GenerateContentConfig(
-                    response_modalities=["TEXT"],
-                ),
+                config=config,
             )
-            return response
 
         response = await asyncio.to_thread(self._sync_call, _call)
-
-        if response.candidates:
-            for candidate in response.candidates:
-                if candidate.content and candidate.content.parts:
-                    texts = [p.text for p in candidate.content.parts if p.text]
-                    if texts:
-                        return "\n".join(texts)
-
-        raise GeminiClientError("No analysis text in response")
+        return _first_text(response, "analysis text")
 
     async def generate_text(self, prompt: str) -> str:
-        """Generate text-only content (no image input/output).
-
-        Uses the Gemini Flash text model for tasks like design token generation
-        where no image context is needed.
-        """
+        """Generate text-only content (no image input/output)."""
 
         def _call():
-            response = self._client.models.generate_content(
+            return self._client.models.generate_content(
                 model=GEMINI_FLASH_TEXT,
                 contents=prompt,
             )
-            return response
 
         response = await asyncio.to_thread(self._sync_call, _call)
-
-        if response.candidates:
-            for candidate in response.candidates:
-                if candidate.content and candidate.content.parts:
-                    texts = [p.text for p in candidate.content.parts if p.text]
-                    if texts:
-                        return "\n".join(texts)
-
-        raise GeminiClientError("No text in response")
+        return _first_text(response, "text")
 
     async def generate_video(
         self,
@@ -326,80 +311,73 @@ class GeminiClient:
         model: str = "veo-3.1-fast",
         image_data: Optional[bytes] = None,
         image_mime_type: Optional[str] = None,
+        duration_seconds: int | None = None,
+        resolution: str | None = None,
     ) -> Any:
-        """Start async video generation. Returns an operation to poll.
-
-        Args:
-            prompt: Video description
-            model: One of "veo-3.1", "veo-3.1-fast"
-            image_data: Optional reference image bytes
-            image_mime_type: MIME type of reference image
-        """
-        model_id = VIDEO_MODEL_MAP.get(model, VEO_3_FAST_MODEL)
+        """Start async video generation. Returns an operation to poll."""
+        if model not in VIDEO_MODEL_MAP:
+            raise ValueError(
+                f"Unknown video model {model!r}. Choose one of: {', '.join(VIDEO_MODEL_MAP)}."
+            )
+        model_id = VIDEO_MODEL_MAP[model]
 
         def _call():
-            # Veo accepts a prompt alongside an image input — passing both lets
+            # Veo accepts a prompt alongside an image input - passing both lets
             # the user guide the animation of an existing reference frame.
             image_arg = (
                 types.Image(image_bytes=image_data, mime_type=image_mime_type)
                 if image_data and image_mime_type
                 else None
             )
-            operation = self._client.models.generate_videos(
+            return self._client.models.generate_videos(
                 model=model_id,
                 prompt=prompt,
                 image=image_arg,
                 config=types.GenerateVideosConfig(
                     person_generation="allow_all",
+                    duration_seconds=duration_seconds,
+                    resolution=resolution,
                 ),
             )
-            return operation
 
         return await asyncio.to_thread(self._sync_call, _call)
 
     async def poll_video_operation(
-        self, operation, timeout_seconds: int = 300
+        self, operation, timeout_seconds: int | None = None
     ) -> list[dict]:
         """Poll a video generation operation until complete.
 
-        Args:
-            operation: The video generation operation to poll.
-            timeout_seconds: Maximum seconds to wait before timing out (default: 300).
-
         Returns list of dicts with keys: 'data' (bytes), 'mime_type' (str)
         """
+        budget = timeout_seconds or VIDEO_POLL_TIMEOUT_SECONDS
 
         def _poll():
-            nonlocal operation
-            start = time.monotonic()
-            # Poll until complete. The google-genai SDK's operation objects are
-            # immutable pydantic models — fetch the updated state via
-            # client.operations.get() rather than mutating in place.
-            while not operation.done:
-                if time.monotonic() - start > timeout_seconds:
+            op = operation
+            deadline = time.monotonic() + budget
+            while not op.done:
+                if time.monotonic() >= deadline:
                     raise GeminiClientError(
-                        f"Video generation timed out after {timeout_seconds}s. "
-                        "The operation may still be running — try again later."
+                        f"Video generation timed out after {budget}s. The job may "
+                        "still finish server-side; raise GEMINI_VISUAL_VIDEO_TIMEOUT "
+                        "to wait longer."
                     )
                 time.sleep(5)
-                operation = self._client.operations.get(operation)
+                op = self._sync_call(self._client.operations.get, op)
 
-            if operation.response and operation.response.generated_videos:
-                results = []
-                for video in operation.response.generated_videos:
-                    video_data = self._client.files.download(file=video.video)
-                    if not isinstance(video_data, bytes):
-                        raise GeminiClientError(
-                            f"Expected bytes from video download, got {type(video_data).__name__}"
-                        )
-                    results.append(
-                        {
-                            "data": video_data,
-                            "mime_type": "video/mp4",
-                        }
-                    )
-                return results
-            else:
-                raise GeminiClientError("Video generation failed or returned no results")
+            results = []
+            generated = getattr(op.response, "generated_videos", None) or []
+            for item in generated:
+                video = getattr(item, "video", None)
+                if video is None:
+                    continue
+                data = getattr(video, "video_bytes", None)
+                if not data:
+                    data = self._sync_call(self._client.files.download, file=video)
+                if isinstance(data, bytes):
+                    results.append({"data": data, "mime_type": "video/mp4"})
+
+            if not results:
+                raise GeminiClientError("Video generation finished but returned no video")
+            return results
 
         return await asyncio.to_thread(_poll)

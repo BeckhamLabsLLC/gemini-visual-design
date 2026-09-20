@@ -69,18 +69,20 @@ AI models respond better to positive descriptions than negative exclusions.
 
 ## Model-Specific Tips
 
-### Gemini 2.5 Flash (Image Generation)
+### `draft` / `fast` (Gemini Flash Image)
 - Best for iterative work — supports multi-turn editing
 - Good at understanding and modifying UI layouts
-- Can handle text rendering reasonably well
+- `draft` is half the price of `fast`; use it for composition checks
 - Use for all drafts and explorations
 
-### Imagen 4
-- Highest photorealistic quality
+### `pro` (Gemini 3 Pro Image)
+- Highest fidelity, and the only tier that renders legible text reliably
 - Best for final production assets
-- Excellent at textures, patterns, and photographic styles
-- Does not support multi-turn editing — plan your prompt carefully
-- Supports up to 4 images per request for variation
+- Accepts reference images for style matching
+- Supports 1K/2K/4K output; 4K costs roughly double
+
+> Imagen 4 was retired by Google on 2026-08-17. `model="imagen"` still works
+> as an alias for `pro`, but it warns and will be removed.
 
 ### Veo (Video)
 - Describe motion and action, not just a static scene

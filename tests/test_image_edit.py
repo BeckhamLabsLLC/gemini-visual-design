@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gemini_visual_mcp.config import IMAGE_MODELS
 from gemini_visual_mcp.image_edit import edit_image
 
 
@@ -33,7 +34,8 @@ class TestEditImage:
         assert "path" in result
         assert result["original_path"] == str(img)
         assert result["instruction"] == "Change the button color to blue"
-        assert result["model"] == "gemini-2.5-flash-image"
+        assert result["model"] == IMAGE_MODELS["fast"]
+        assert result["tier"] == "fast"
 
     @pytest.mark.asyncio
     async def test_style_profile_injection_when_preserve_style(self, tmp_path):
@@ -48,7 +50,9 @@ class TestEditImage:
         mock_profile = {"colors": {"primary": "#ff0000"}, "visual_style": "dark mode"}
 
         with patch("gemini_visual_mcp.image_edit.load_profile", return_value=mock_profile):
-            with patch("gemini_visual_mcp.image_edit.apply_to_prompt", return_value="enhanced instruction") as mock_apply:
+            with patch(
+                "gemini_visual_mcp.image_edit.apply_to_prompt", return_value="enhanced instruction"
+            ) as mock_apply:
                 with patch("gemini_visual_mcp.image_edit.save_generated") as mock_save:
                     mock_save.return_value = tmp_path / "edit_result.png"
                     result = await edit_image(

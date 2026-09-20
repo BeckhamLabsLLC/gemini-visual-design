@@ -3,10 +3,13 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from google.genai import errors as genai_errors
 
+from gemini_visual_mcp.config import API_TIMEOUT_MS
 from gemini_visual_mcp.gemini_client import (
     GeminiAuthError,
     GeminiClient,
+    GeminiClientError,
     GeminiContentPolicyError,
     GeminiQuotaError,
 )
@@ -23,46 +26,85 @@ class TestGeminiClientInit:
     def test_explicit_api_key(self):
         with patch("gemini_visual_mcp.gemini_client.genai") as mock_genai:
             GeminiClient(api_key="test-key-123")
-            mock_genai.Client.assert_called_once_with(api_key="test-key-123")
+            kwargs = mock_genai.Client.call_args.kwargs
+            assert kwargs["api_key"] == "test-key-123"
+
+    def test_client_configures_timeout_and_retry(self):
+        """A hung connection used to block a worker thread forever."""
+        with patch("gemini_visual_mcp.gemini_client.genai") as mock_genai:
+            GeminiClient(api_key="k")
+            http_options = mock_genai.Client.call_args.kwargs["http_options"]
+            assert http_options.timeout == API_TIMEOUT_MS
+            codes = http_options.retry_options.http_status_codes
+            assert 429 in codes and 503 in codes
+            # Permanent failures must never be retried.
+            assert 400 not in codes and 404 not in codes
 
 
-class TestRetryLogic:
-    """Tests for retry and error handling."""
+class TestErrorClassification:
+    """Errors are classified from typed SDK exceptions, not substring matches."""
 
-    def test_sync_call_auth_error_no_retry(self):
+    def _client(self):
         with patch("gemini_visual_mcp.gemini_client.genai"):
-            client = GeminiClient(api_key="test-key")
-            func = MagicMock(side_effect=Exception("401 authentication failed"))
-            with pytest.raises(GeminiAuthError):
-                client._sync_call(func)
-            # Should only be called once (no retry)
-            assert func.call_count == 1
+            return GeminiClient(api_key="test-key")
 
-    def test_sync_call_content_policy_no_retry(self):
-        with patch("gemini_visual_mcp.gemini_client.genai"):
-            client = GeminiClient(api_key="test-key")
-            func = MagicMock(side_effect=Exception("Content blocked by safety policy"))
-            with pytest.raises(GeminiContentPolicyError):
-                client._sync_call(func)
-            assert func.call_count == 1
+    def _client_error(self, code, message="boom", details=None):
+        err = genai_errors.ClientError.__new__(genai_errors.ClientError)
+        Exception.__init__(err, message)
+        err.code = code
+        err.message = message
+        err.details = details or {}
+        err.status = None
+        return err
 
-    def test_sync_call_quota_retries(self):
-        with patch("gemini_visual_mcp.gemini_client.genai"):
-            with patch("gemini_visual_mcp.gemini_client.time.sleep"):
-                client = GeminiClient(api_key="test-key")
-                func = MagicMock(side_effect=Exception("429 quota exceeded"))
-                with pytest.raises(GeminiQuotaError):
-                    client._sync_call(func)
-                assert func.call_count == 3  # MAX_RETRIES
+    def test_auth_error_not_retried(self):
+        client = self._client()
+        func = MagicMock(side_effect=self._client_error(401, "invalid key"))
+        with pytest.raises(GeminiAuthError):
+            client._sync_call(func)
+        assert func.call_count == 1
 
-    def test_sync_call_success_after_retry(self):
-        with patch("gemini_visual_mcp.gemini_client.genai"):
-            with patch("gemini_visual_mcp.gemini_client.time.sleep"):
-                client = GeminiClient(api_key="test-key")
-                func = MagicMock(side_effect=[Exception("transient error"), "success"])
-                result = client._sync_call(func)
-                assert result == "success"
-                assert func.call_count == 2
+    def test_content_policy_from_details(self):
+        client = self._client()
+        func = MagicMock(side_effect=self._client_error(400, "blocked", {"reason": "SAFETY"}))
+        with pytest.raises(GeminiContentPolicyError):
+            client._sync_call(func)
+        assert func.call_count == 1
+
+    def test_quota_error(self):
+        client = self._client()
+        func = MagicMock(side_effect=self._client_error(429, "rate limited"))
+        with pytest.raises(GeminiQuotaError):
+            client._sync_call(func)
+
+    def test_bad_model_id_fails_immediately(self):
+        """A retired model id used to cost 3 calls and ~7s of sleeps."""
+        client = self._client()
+        func = MagicMock(side_effect=self._client_error(404, "model not found"))
+        with pytest.raises(GeminiClientError) as excinfo:
+            client._sync_call(func)
+        assert func.call_count == 1
+        assert not isinstance(excinfo.value, GeminiQuotaError)
+
+    def test_byte_count_in_message_is_not_an_auth_error(self):
+        """Substring matching used to read '401 bytes' as a 401 status."""
+        client = self._client()
+        func = MagicMock(side_effect=ValueError("response was 401 bytes"))
+        with pytest.raises(GeminiClientError) as excinfo:
+            client._sync_call(func)
+        assert not isinstance(excinfo.value, GeminiAuthError)
+
+    def test_server_error_is_wrapped(self):
+        client = self._client()
+        err = genai_errors.ServerError.__new__(genai_errors.ServerError)
+        Exception.__init__(err, "503 unavailable")
+        err.code = 503
+        err.message = "unavailable"
+        err.details = {}
+        err.status = None
+        func = MagicMock(side_effect=err)
+        with pytest.raises(GeminiClientError):
+            client._sync_call(func)
 
 
 class TestGenerateImageWithReference:
