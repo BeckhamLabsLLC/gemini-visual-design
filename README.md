@@ -37,6 +37,17 @@ export GEMINI_API_KEY="your-key-here"
 ```
 
 <details>
+<summary>Install from the Beckham Labs catalog instead</summary>
+
+One marketplace for every plugin we publish:
+
+```
+/plugin marketplace add BeckhamLabsLLC/claude-plugins
+/plugin install gemini-visual-design@beckhamlabs-plugins
+```
+</details>
+
+<details>
 <summary>On Claude Code older than v2.1.275</summary>
 
 ```

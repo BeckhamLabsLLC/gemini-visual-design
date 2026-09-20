@@ -59,3 +59,34 @@ check 0 of the smoke test, which lists every configured id against the live API:
 ```bash
 python scripts/smoke_live.py --only models_list   # free
 ```
+
+## Community marketplace
+
+The plugin is not yet listed in `anthropics/claude-plugins-community`. Submitting
+puts it in the `/plugin` Discover tab, which is the only in-product distribution
+channel there is.
+
+Submission is an in-app form, not a pull request — PRs opened against that repo
+are closed automatically:
+
+- **Console** (individual authors): [platform.claude.com/plugins/submit](https://platform.claude.com/plugins/submit)
+- **claude.ai** (Team/Enterprise orgs with directory access): [claude.ai/admin-settings/directory/submissions/plugins/new](https://claude.ai/admin-settings/directory/submissions/plugins/new)
+
+The review pipeline runs `claude plugin validate` plus automated safety
+screening. Run it first:
+
+```bash
+claude plugin validate . --strict
+```
+
+Approved plugins are pinned to a commit SHA, CI bumps the pin as you push, and
+the public catalog syncs nightly — so expect a delay between approval and the
+plugin appearing in
+[the catalog's marketplace.json](https://github.com/anthropics/claude-plugins-community/blob/main/.claude-plugin/marketplace.json).
+
+## Measuring whether the plugin actually helps
+
+`claude plugin eval` runs a set of prompts several times with and without the
+plugin loaded, so you can see what it contributes and catch regressions when a
+new model ships. Worth setting up before the next release — nothing here
+currently measures whether Claude reaches for these tools at the right moment.
