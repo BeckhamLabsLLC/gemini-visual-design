@@ -112,9 +112,9 @@ Consistent 2px stroke, rounded line caps, monochrome dark indigo.
 <details>
 <summary><strong>Edit, don't regenerate</strong></summary>
 
-| Before | After |
-|---|---|
-| ![Before](docs/screenshots/edit-before.jpg) | ![After](docs/screenshots/edit-after.jpg) |
+![edit_image before and after](docs/screenshots/edit-loop.gif)
+
+<sub>Looping between the original and the edited result. Both are real outputs; only the background changed.</sub>
 
 ```
 edit_image
