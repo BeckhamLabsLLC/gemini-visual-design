@@ -20,21 +20,28 @@ cadence, and CI already guards the things that actually break.
    claude plugin validate .
    ```
 
-4. **Run the live smoke test** if anything touched a model id, the client, or
+4. **Run the protocol check.** Free, no API calls. The unit tests patch mcp's
+   `Server`, so they cannot see a broken launch command, an unresolvable
+   dependency, or an unregistered handler.
+   ```bash
+   python scripts/check_protocol.py
+   ```
+
+5. **Run the live smoke test** if anything touched a model id, the client, or
    generation. Mocks cannot tell you a model was retired.
    ```bash
    python scripts/smoke_live.py --dry-run   # see the cost first
    python scripts/smoke_live.py             # ~$0.80
    ```
 
-5. **Tag and release.**
+6. **Tag and release.**
    ```bash
    git tag -a vX.Y.Z -m "vX.Y.Z"
    git push origin vX.Y.Z
    gh release create vX.Y.Z --title "vX.Y.Z — <one line>" --notes-file <changelog section>
    ```
 
-6. **Verify the install path** from a clean machine or container:
+7. **Verify the install path** from a clean machine or container:
    ```
    /plugin install gemini-visual-design --marketplace BeckhamLabsLLC/gemini-visual-design
    ```

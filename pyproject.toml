@@ -40,9 +40,13 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "mcp>=1.0.0",
+    # Upper bounds are load-bearing, not caution. mcp 2.x removed the
+    # decorator API this server is built on (Server.list_tools /
+    # Server.call_tool), so an unbounded floor resolves to a version that
+    # fails at import. Migrating to 2.x is tracked separately.
+    "mcp>=1.9,<2",
     # 1.60 is the floor for GenerateContentConfig.image_config.
-    "google-genai>=1.60",
+    "google-genai>=1.60,<2",
 ]
 
 [project.optional-dependencies]
@@ -51,6 +55,9 @@ dev = [
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.0.0",
     "pytest-timeout>=2.0.0",
+    # Used by tests/test_protocol.py; arrives via mcp, but relying on a
+    # transitive dep is what this release is about.
+    "jsonschema>=4.0.0",
     "ruff>=0.1.0",
 ]
 

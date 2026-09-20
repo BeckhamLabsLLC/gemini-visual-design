@@ -17,6 +17,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
+from . import __version__
 from .analyzer import analyze_design
 from .asset_manager import (
     cleanup_old,
@@ -65,7 +66,7 @@ class GeminiVisualDesignServer:
     """MCP Server for visual design with Gemini."""
 
     def __init__(self):
-        self._server = Server("gemini-visual-design")
+        self._server = Server("gemini-visual-design", version=__version__)
         self._client: GeminiClient | None = None
         self._last_cleanup = float("-inf")
         self._setup_handlers()
@@ -102,6 +103,10 @@ class GeminiVisualDesignServer:
         @self._server.list_tools()
         async def list_tools() -> list[Tool]:
             return self.tool_definitions()
+
+        @self._server.call_tool()
+        async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+            return await self._dispatch(name, arguments)
 
     def tool_definitions(self) -> list[Tool]:
         """The tools this server advertises."""
@@ -415,10 +420,6 @@ class GeminiVisualDesignServer:
             ),
         ]
 
-        @self._server.call_tool()
-        async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-            return await self._dispatch(name, arguments)
-
     @staticmethod
     def _error(message: str, kind: str) -> list[TextContent]:
         return [
@@ -725,8 +726,6 @@ Return ONLY the {token_format} code, no explanations."""
 
 def main():
     """Entry point for the MCP server."""
-    from . import __version__
-
     api_key_status = "[set]" if os.environ.get("GEMINI_API_KEY") else "[missing]"
     tools = [
         "generate_image",

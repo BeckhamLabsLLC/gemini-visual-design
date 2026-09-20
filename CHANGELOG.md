@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `list_generated` no longer drops assets whose sidecar lacks a `filename` key.
 - `generate_design_tokens` reports `profile_updated` accurately, and surfaces a missing reference image instead of silently generating text-only tokens.
 - An unknown tool name raises instead of returning an error payload shaped like a success.
+- Pinned `mcp<2` and `google-genai<2`. The unbounded `mcp>=1.0.0` floor was harmless only because installs happened to reuse an existing 1.x; resolving dependencies fresh picks up mcp 2.x, which removed the decorator API this server is built on, and the server fails at import. Migrating to mcp 2.x is separate work.
+- The server reports its own version in `serverInfo` instead of the mcp library's.
 
 - Image-to-video generation now correctly forwards the user's prompt alongside a reference image (was previously dropped, producing un-guided animations).
 - `read_image` raises `ValueError` for unsupported file extensions instead of silently defaulting to `image/png` and producing cryptic Gemini API errors.
@@ -44,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/smoke_live.py` - an opt-in end-to-end test against the real API, with per-check cost estimates.
 - Regression tests that fail if any configured model id is retired, is a `-preview` build, or is hardcoded outside `config.py`.
 - Real coverage for the `call_tool` error map, which previously had none.
+- `tests/test_protocol.py` and `scripts/check_protocol.py`, which exercise a real (unmocked) mcp `Server`. Every other test patches it, so none of them can see an unregistered handler, a broken launch command, or an unresolvable dependency.
 - `edit_image` now surfaces the model's commentary as `model_notes`, matching `generate_image`. It was being returned internally and dropped.
 
 ### Changed
