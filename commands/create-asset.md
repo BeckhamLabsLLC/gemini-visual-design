@@ -39,8 +39,8 @@ Generate visual assets with style-profile consistency.
 ### 4. Generate
 - Use `generate_image` with the appropriate model:
   - Drafts/exploration: model="gemini"
-  - Production-quality final: model="imagen"
-- For icon sets or variations: use count=4 with Imagen
+  - Production-quality final: model="pro"
+- For icon sets or variations: use count=4 (each one is a separate billed call)
 
 ### 5. Review and Edit
 - Show the result path

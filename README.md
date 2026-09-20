@@ -3,8 +3,6 @@
 > Generate, edit, analyze, and animate visual designs with Google Gemini — directly inside Claude Code.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
-[![PyPI version](https://img.shields.io/badge/version-1.0.0-green.svg)](pyproject.toml)
 [![CI](https://github.com/BeckhamLabsLLC/gemini-visual-design/actions/workflows/ci.yml/badge.svg)](https://github.com/BeckhamLabsLLC/gemini-visual-design/actions/workflows/ci.yml)
 [![Claude Code Plugin](https://img.shields.io/badge/Claude%20Code-plugin-orange.svg)](https://docs.claude.com/en/docs/claude-code/plugins)
 
@@ -12,34 +10,89 @@
 
 > *Generated in one command:* `/design-mockup A dark analytics dashboard with sidebar nav, KPI cards, an area chart, and a transactions table`
 >
-> Every screenshot in this README is a real, unretouched output from the plugin's own MCP tools — no Photoshop, no mockup tool. The exact prompt used for each one is shown in its caption.
+> Every screenshot in this README is real, unretouched output from the plugin's own MCP tools — no Photoshop, no mockup tool. The exact prompt used for each one is shown in its caption. (Image models are non-deterministic, so the same prompt will give you something similar, not identical.)
 
 ## Why this plugin
 
 Calling Gemini directly is easy. Calling it *well* — without burning quota on bad prompts, generic outputs, or one-off images that don't match your project — is the hard part.
 
-This plugin wraps the Google GenAI SDK in a **prompt enhancement pipeline** (validation → templates → style-profile injection → API), a **draft-first workflow** (fast Gemini Flash for iteration, Imagen 4 for finals, Veo for video), an **edit-over-regenerate** philosophy via multi-turn image editing, and **project-aware style profiles** that auto-detect your Tailwind/CSS config so every generation inherits your colors, typography, and aesthetic. Plus the `visual-enhancer` agent that proactively suggests visual upgrades after Claude writes UI code.
+Most Gemini MCP servers stop at "here's an image." This one reads your Tailwind/CSS config, generates in *your* palette and typography, critiques the result, and hands you the edit command to fix it — without leaving Claude Code.
 
-## Quick start (5 minutes)
+Concretely, it wraps the Google GenAI SDK in a **prompt enhancement pipeline** (validation → templates → style-profile injection → API), a **draft-first workflow** across three cost tiers, an **edit-over-regenerate** philosophy via multi-turn image editing, and **project-aware style profiles** so every generation inherits your design language. Plus the `visual-enhancer` agent that proactively suggests visual upgrades after Claude writes UI code.
+
+## Install
+
+**1. Get a Gemini API key** at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) and export it (add it to `~/.bashrc` or `~/.zshrc` so it persists):
 
 ```bash
-# 1. Get a free API key at https://aistudio.google.com/apikey
 export GEMINI_API_KEY="your-key-here"
-
-# 2. Install
-cd gemini-visual-design
-pip install -e .
-
-# 3. Restart Claude Code so it picks up the .mcp.json
 ```
 
-Then, in any project, ask Claude:
+> **Billing is required.** No Gemini image or video model has a free tier. See [What it costs](#what-it-costs).
+
+**2. Install the plugin** — from inside Claude Code:
+
+```
+/plugin install gemini-visual-design --marketplace BeckhamLabsLLC/gemini-visual-design
+```
+
+<details>
+<summary>On Claude Code older than v2.1.275</summary>
+
+```
+/plugin marketplace add BeckhamLabsLLC/gemini-visual-design
+/plugin install gemini-visual-design@gemini-visual-design
+```
+</details>
+
+**3. Restart Claude Code**, then in any project:
 
 ```
 /design-mockup A dark-themed analytics dashboard with sidebar navigation and KPI cards
 ```
 
-You'll get a generated image at `~/.cache/gemini-visual-design/preview/` plus a tip on how to refine it with `edit_image` or save it into your project with `save_asset`.
+You'll get a generated image in `~/.cache/gemini-visual-design/preview/` plus a tip on how to refine it with `edit_image` or save it into your project with `save_asset`.
+
+<details>
+<summary>Run from a clone instead (contributors)</summary>
+
+```bash
+git clone https://github.com/BeckhamLabsLLC/gemini-visual-design.git
+cd gemini-visual-design
+claude --plugin-dir .
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the dev setup.
+</details>
+
+## Requirements
+
+| | Requirement | Notes |
+|---|---|---|
+| Claude Code | v2.1.275+ | Older versions: use the two-step install above |
+| [`uv`](https://docs.astral.sh/uv/) | required | The MCP server runs under `uv run`, so Python dependencies install themselves |
+| Python | 3.10–3.12 | Tested in CI |
+| Gemini API key | required | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
+| Billing enabled | **required** | No image or video model has a free tier |
+
+## What it costs
+
+You pay Google directly; this plugin takes nothing. Prices as of September 2026:
+
+| `model=` | Used for | Price |
+|---|---|---|
+| `draft` | Cheapest iteration | $0.034 / image (1K) |
+| `fast` *(default)* | Drafts and most generation | $0.067 / image (1K) |
+| `pro` | Finals — legible text, best fidelity | $0.134 (1K–2K) · $0.24 (4K) |
+| `veo-3.1-lite` | Cheapest video | $0.05/sec — a 4s clip ≈ **$0.20** |
+| `veo-3.1-fast` *(default)* | Balanced video | $0.12/sec at 1080p — an 8s clip ≈ **$0.96** |
+| `veo-3.1` | Best video | $0.40/sec |
+
+**There is no free tier for image or video generation.** A typical mockup session — one draft, three edits, one critique — runs about **$0.30**. `analyze_design` runs on a text model and costs fractions of a cent.
+
+## Privacy
+
+Every prompt you send, and every image passed to `edit_image` or `analyze_design`, is uploaded to Google's Gemini API. Your `.gemini-design-profile.json` contents (colors, fonts, framework) are injected into prompts and therefore sent too. Nothing goes anywhere else — no telemetry, no analytics, one outbound host. Generated assets and their metadata sidecars stay local in `~/.cache/gemini-visual-design/preview/`.
 
 ## Gallery
 
@@ -59,9 +112,9 @@ Consistent 2px stroke, rounded line caps, monochrome dark indigo.
 <details>
 <summary><strong>Edit, don't regenerate</strong></summary>
 
-| Before | After |
-|---|---|
-| ![Before](docs/screenshots/edit-before.jpg) | ![After](docs/screenshots/edit-after.jpg) |
+![edit_image before and after](docs/screenshots/edit-loop.gif)
+
+<sub>Looping between the original and the edited result. Both are real outputs; only the background changed.</sub>
 
 ```
 edit_image
@@ -134,7 +187,7 @@ Polls asynchronously, returns an `.mp4` in the preview directory. Supports image
 
 | Tool | Description |
 |------|-------------|
-| `generate_image` | Generate images with Gemini (drafts) or Imagen 4 (finals) |
+| `generate_image` | Generate images across three cost tiers (`draft`/`fast`/`pro`) |
 | `edit_image` | Edit existing images with natural language instructions |
 | `analyze_design` | Visual design critique with scored categories |
 | `generate_video` | Generate video clips with Veo models |
@@ -146,18 +199,20 @@ Polls asynchronously, returns an `.mp4` in the preview directory. Supports image
 
 ## How it compares
 
-| | This plugin | `google-genai` SDK | Official Gemini CLI |
-|---|---|---|---|
-| Project-aware style profiles | ✅ | ❌ | ❌ |
-| Prompt enhancement pipeline | ✅ | ❌ | ❌ |
-| Template library (UI, icons, game, landing pages) | ✅ | ❌ | partial |
-| Multi-turn image editing | ✅ | manual | manual |
-| Design analysis with scored critique | ✅ | manual | ❌ |
-| Native Claude Code integration (commands, agent, hook) | ✅ | n/a | ❌ |
-| Asset history with metadata sidecars | ✅ | ❌ | ❌ |
-| Auto-cleanup of preview cache | ✅ | n/a | ❌ |
+There are half a dozen "nano banana" MCP servers. Most are thin wrappers that hand back an image.
 
-The differentiation is the workflow scaffolding around the API, not the API itself. If you're calling Gemini once, use the SDK. If you're using it as part of an iterative design loop in Claude Code, use this.
+| | This plugin | Typical Gemini MCP server | Official Gemini CLI |
+|---|---|---|---|
+| Generates in your project's colors and fonts (auto-detected from your CSS) | ✅ | ❌ | ❌ |
+| Critique returns runnable `edit_image` commands | ✅ | ❌ | ❌ |
+| Prompt validation + 25-template library before the API call | ✅ | ❌ | partial |
+| Design-token export (CSS / Tailwind / SCSS / JSON) | ✅ | ❌ | ❌ |
+| Slash commands, skill, proactive agent, session hook | ✅ | ❌ | n/a |
+| Multi-turn image editing | ✅ | sometimes | manual |
+| Asset history with metadata sidecars | ✅ | ❌ | ❌ |
+| Published per-call cost table | ✅ | ❌ | ❌ |
+
+The differentiation is the workflow scaffolding around the API, not the API itself. **If you just want an image, any of the thin wrappers will do. If you want the image to look like it belongs in your app, use this.**
 
 ## Style profiles
 
@@ -187,31 +242,6 @@ Create a `.gemini-design-profile.json` in your project root to maintain visual c
 ```
 
 Or skip the manual setup — run `init_style_profile` with `auto_detect: true` and the plugin will scan your existing Tailwind config and CSS files to populate this for you.
-
-## Installation (detailed)
-
-### 1. Get a Gemini API Key
-
-Get your API key at [Google AI Studio](https://aistudio.google.com/apikey). The free tier covers basic text and the Gemini Flash family; Imagen 4 and Veo require billing enabled on your Google Cloud project.
-
-### 2. Set the environment variable
-
-```bash
-export GEMINI_API_KEY="your-api-key-here"
-```
-
-Add it to `~/.bashrc` or `~/.zshrc` so it persists.
-
-### 3. Install dependencies
-
-```bash
-cd gemini-visual-design
-pip install -e .
-```
-
-### 4. Use as a Claude Code plugin
-
-The plugin is auto-detected when placed in your Claude Code plugins directory. The `.mcp.json` and `.claude-plugin/plugin.json` manifests configure the MCP server, slash commands, the `visual-enhancer` agent, the `visual-design-system` skill, and the API-key validation hook. After installing, restart Claude Code so the MCP server starts.
 
 ## File locations
 
@@ -251,17 +281,19 @@ The plugin is auto-detected when placed in your Claude Code plugins directory. T
 
 **Missing API key**: Set `GEMINI_API_KEY` and restart Claude Code. The session-start hook will warn you if it's not set.
 
-**Quota errors**: You've exceeded the Gemini API rate limit. The client has built-in exponential backoff for transient errors — wait a moment and retry. For sustained workloads, enable billing on your Google Cloud project.
+**Quota errors**: You've exceeded the Gemini API rate limit. The client retries 429s and 5xx with backoff automatically — wait a moment and retry.
 
-**`limit: 0` in the quota error**: Your account doesn't have free-tier access to that specific model. Either enable billing or switch the model in `src/gemini_visual_mcp/config.py` to one your account has access to (then restart Claude Code).
+**`limit: 0` in the quota error**: Your API key has no billing enabled. No Gemini image or video model has a free tier, so every visual operation will fail until you enable billing on the Google Cloud project behind your key.
 
 **Content policy blocks**: Gemini refused to generate the image. Rephrase your prompt to avoid content that violates Google's safety policies.
 
-**Slow video generation**: Video generation with Veo takes 1–3 minutes. This is normal. The polling has a 5-minute timeout.
+**Slow video generation**: Veo takes 1–3 minutes. This is normal. Polling waits 10 minutes by default; raise it with `GEMINI_VISUAL_VIDEO_TIMEOUT=900`.
 
 **Style mismatch**: Generated assets don't match your project's look. Run `init_style_profile` with `auto_detect: true` to scan your existing CSS/Tailwind config and create a matching style profile.
 
-**Plugin doesn't load**: Make sure the plugin is in your Claude Code plugins directory and that you restarted Claude Code. Check `~/.claude/logs/` for the MCP server's startup line — it logs the version, API key status, and the list of registered tools.
+**Plugin doesn't load**: Check the Errors tab of `/plugin`. The most common cause is `uv` not being installed or not on `PATH` — the MCP server launches with `uv run`, which provisions the Python dependencies for you.
+
+**Assets or profiles land in the wrong directory**: The server resolves your project from `CLAUDE_PROJECT_DIR`. If your setup doesn't provide it, set `GEMINI_VISUAL_PROJECT_DIR` to your project root and restart.
 
 ## Contributing
 

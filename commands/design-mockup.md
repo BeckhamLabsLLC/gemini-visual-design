@@ -45,7 +45,7 @@ Follow this workflow strictly — it minimizes wasted API calls:
 
 ### 5. Finalize (Optional)
 - Ask if the user wants a higher-quality version
-- If yes, regenerate with model="imagen" using the refined prompt
+- If yes, regenerate with model="pro" using the refined prompt
 - Show the final result
 
 ### 6. Save

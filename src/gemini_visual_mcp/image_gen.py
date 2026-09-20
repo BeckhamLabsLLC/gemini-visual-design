@@ -1,40 +1,84 @@
-"""Image generation using Gemini native and Imagen 4.
+"""Image generation across the Gemini image tiers.
 
 All generation routes through the prompt engine for enhancement before
-hitting the API. Supports auto model selection (draft vs final).
+hitting the API. Supports auto tier selection (draft vs final).
 """
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Optional
 
 from .asset_manager import save_generated
-from .config import DEFAULT_ASPECT_RATIO, DEFAULT_IMAGE_COUNT
+from .config import (
+    DEFAULT_ASPECT_RATIO,
+    DEFAULT_IMAGE_COUNT,
+    DEFAULT_IMAGE_TIER,
+    IMAGE_MODELS,
+    MODEL_CHOICES_IMAGE,
+    clamp_resolution,
+    resolve_image_tier,
+)
 from .gemini_client import GeminiClient
 from .image_utils import read_image
-from .prompt_engine import enhance
+from .prompt_engine import PromptValidationWarning, enhance
 from .style_profile import load_profile
 
 logger = logging.getLogger(__name__)
 
+# Prompt wording that means the user wants a final asset, not a draft.
+QUALITY_WORDS = ("final", "production", "high quality", "polished", "publish", "hero image")
 
-async def generate_with_gemini(
+STYLE_REFERENCE_PREAMBLE = (
+    "Use the provided image ONLY as a style and aesthetic reference. "
+    "Do NOT reproduce or edit the reference image. Generate a completely "
+    "new image matching its art style, color palette, rendering technique, "
+    "and visual mood. The new image should depict: "
+)
+
+
+def _select_tier(prompt: str, template: Optional[str]) -> str:
+    """Pick a tier for model='auto'.
+
+    Auto never selects 'draft' - opting into the cheapest model should be a
+    deliberate choice, not something inferred from prompt wording.
+    """
+    if template and "/" in template:
+        from .prompt_engine import TEMPLATES
+
+        cat, key = template.split("/", 1)
+        recommended = TEMPLATES.get(cat, {}).get(key, {}).get("recommended_model")
+        if recommended:
+            tier, _ = resolve_image_tier(recommended)
+            if tier in IMAGE_MODELS:
+                return tier
+
+    if any(word in prompt.lower() for word in QUALITY_WORDS):
+        return "pro"
+    return DEFAULT_IMAGE_TIER
+
+
+async def generate_images(
     client: GeminiClient,
     prompt: str,
-    aspect_ratio: str = DEFAULT_ASPECT_RATIO,
+    tier: str = DEFAULT_IMAGE_TIER,
+    count: int = DEFAULT_IMAGE_COUNT,
+    aspect_ratio: Optional[str] = None,
+    resolution: Optional[str] = None,
     cwd: str = ".",
     use_profile: bool = True,
     template: Optional[str] = None,
     reference_image: Optional[str] = None,
+    extra_warnings: Optional[list] = None,
 ) -> list[dict]:
-    """Generate image(s) using Gemini 2.5 Flash (fast, iterative drafts).
+    """Generate `count` images with the given tier.
 
-    When reference_image is provided, the model receives the image alongside
-    the prompt and is instructed to match its art style in the new generation.
+    The Gemini image models reject candidate_count > 1, so count fans out to
+    that many separate API calls. Partial success is preserved: images already
+    paid for are returned even if a sibling call fails.
 
     Returns list of dicts with: path, enhanced_prompt, warnings, model, metadata
     """
-    # Load profile
     profile = load_profile(cwd) if use_profile else None
 
     # Auto-load reference image from profile if none provided explicitly
@@ -43,100 +87,81 @@ async def generate_with_gemini(
         if Path(ref_path).is_file():
             reference_image = ref_path
 
-    # Enhance prompt
-    enhanced_prompt, warnings = enhance(prompt, profile=profile, template=template)
+    enhanced_prompt, warnings, template_meta = enhance(prompt, profile=profile, template=template)
+    warnings = list(warnings) + list(extra_warnings or [])
 
-    # Build style-reference prompt and read image bytes when a reference is provided
+    # Precedence for shape and size: explicit argument, then the template's
+    # own recommendation, then the project profile's default, then the global
+    # default. Without this an icons/* template asking for 1:1 still produced
+    # a 16:9 image.
+    if aspect_ratio is None:
+        aspect_ratio = (
+            template_meta.get("aspect_ratio")
+            or (profile or {}).get("default_aspect_ratio")
+            or DEFAULT_ASPECT_RATIO
+        )
+    if resolution is None:
+        resolution = template_meta.get("resolution") or (profile or {}).get("default_resolution")
+
+    resolution, clamp_warning = clamp_resolution(tier, resolution)
+    if clamp_warning:
+        logger.info(clamp_warning)
+
     ref_data = None
     ref_mime = None
     if reference_image:
         ref_data, ref_mime = read_image(reference_image)
-        enhanced_prompt = (
-            "Use the provided image ONLY as a style and aesthetic reference. "
-            "Do NOT reproduce or edit the reference image. Generate a completely "
-            "new image matching its art style, color palette, rendering technique, "
-            "and visual mood. The new image should depict: " + enhanced_prompt
+        enhanced_prompt = STYLE_REFERENCE_PREAMBLE + enhanced_prompt
+
+    count = max(1, min(int(count or 1), 4))
+    calls = [
+        client.generate_image_gemini(
+            prompt=enhanced_prompt,
+            tier=tier,
+            aspect_ratio=aspect_ratio,
+            resolution=resolution,
+            reference_image_data=ref_data,
+            reference_mime_type=ref_mime,
         )
+        for _ in range(count)
+    ]
+    outcomes = await asyncio.gather(*calls, return_exceptions=True)
 
-    # Generate
-    results = await client.generate_image_gemini(
-        prompt=enhanced_prompt,
-        aspect_ratio=aspect_ratio,
-        reference_image_data=ref_data,
-        reference_mime_type=ref_mime,
-    )
+    failures = [o for o in outcomes if isinstance(o, BaseException)]
+    results = [r for o in outcomes if not isinstance(o, BaseException) for r in o]
 
-    # Save results
-    saved = []
-    for i, result in enumerate(results):
-        metadata = {
-            "prompt": prompt,
-            "enhanced_prompt": enhanced_prompt,
-            "model": "gemini-2.5-flash-image",
-            "aspect_ratio": aspect_ratio,
-            "template": template or "",
-            "reference_image": reference_image or "",
-            "warnings": [w.to_dict() for w in warnings],
-        }
+    if not results:
+        # Every call failed - surface the first real error rather than an
+        # empty list the caller has to guess about.
+        raise failures[0]
 
-        path = save_generated(
-            data=result["data"],
-            mime_type=result["mime_type"],
-            metadata=metadata,
-            prefix="gen",
-        )
+    if failures:
+        logger.warning("%d of %d image calls failed: %s", len(failures), count, failures[0])
 
-        saved.append(
+    warning_dicts = [w.to_dict() for w in warnings]
+    if clamp_warning:
+        warning_dicts.append({"type": "resolution_clamped", "message": clamp_warning})
+    if failures:
+        warning_dicts.append(
             {
-                "path": str(path),
-                "enhanced_prompt": enhanced_prompt,
-                "warnings": [w.to_dict() for w in warnings],
-                "model": "gemini-2.5-flash-image",
-                "text": result.get("text"),
-                "metadata": metadata,
+                "type": "partial_failure",
+                "message": f"{len(failures)} of {count} images failed: {failures[0]}",
             }
         )
 
-    return saved
-
-
-async def generate_with_imagen(
-    client: GeminiClient,
-    prompt: str,
-    count: int = DEFAULT_IMAGE_COUNT,
-    aspect_ratio: str = DEFAULT_ASPECT_RATIO,
-    cwd: str = ".",
-    use_profile: bool = True,
-    template: Optional[str] = None,
-) -> list[dict]:
-    """Generate image(s) using Imagen 4 (high quality, final assets).
-
-    Returns list of dicts with: path, enhanced_prompt, warnings, model, metadata
-    """
-    # Load profile
-    profile = load_profile(cwd) if use_profile else None
-
-    # Enhance prompt
-    enhanced_prompt, warnings = enhance(prompt, profile=profile, template=template)
-
-    # Generate
-    results = await client.generate_image_imagen(
-        prompt=enhanced_prompt,
-        count=count,
-        aspect_ratio=aspect_ratio,
-    )
-
-    # Save results
     saved = []
-    for i, result in enumerate(results):
+    for result in results:
+        model_used = result.get("model") or IMAGE_MODELS[tier]
         metadata = {
             "prompt": prompt,
             "enhanced_prompt": enhanced_prompt,
-            "model": "imagen-4.0",
+            "model": model_used,
+            "tier": tier,
             "aspect_ratio": aspect_ratio,
-            "count": count,
+            "resolution": resolution,
             "template": template or "",
-            "warnings": [w.to_dict() for w in warnings],
+            "reference_image": reference_image or "",
+            "warnings": warning_dicts,
         }
 
         path = save_generated(
@@ -150,8 +175,10 @@ async def generate_with_imagen(
             {
                 "path": str(path),
                 "enhanced_prompt": enhanced_prompt,
-                "warnings": [w.to_dict() for w in warnings],
-                "model": "imagen-4.0",
+                "warnings": warning_dicts,
+                "model": model_used,
+                "tier": tier,
+                "text": result.get("text"),
                 "metadata": metadata,
             }
         )
@@ -164,68 +191,48 @@ async def auto_generate(
     prompt: str,
     model: str = "auto",
     count: int = DEFAULT_IMAGE_COUNT,
-    aspect_ratio: str = DEFAULT_ASPECT_RATIO,
+    aspect_ratio: Optional[str] = None,
+    resolution: Optional[str] = None,
     cwd: str = ".",
     use_profile: bool = True,
     template: Optional[str] = None,
     reference_image: Optional[str] = None,
 ) -> list[dict]:
-    """Generate with automatic model selection.
+    """Generate with automatic tier selection.
 
-    - "gemini": Use Gemini Flash (fast drafts, iterative editing)
-    - "imagen": Use Imagen 4 (high quality finals)
-    - "auto": Use Gemini for drafts, Imagen for production-quality assets
+    - "draft": cheapest, for throwaway iteration
+    - "fast":  default
+    - "pro":   finals - legible text, best fidelity
+    - "auto":  'pro' when the prompt or template asks for a final, else 'fast'
 
-    When reference_image is provided, the Gemini path is always used
-    (Imagen's text-to-image API does not accept reference images).
-
-    Auto logic: Use Gemini by default. Use Imagen when:
-    - User explicitly says "final", "production", "high quality", "polished"
-    - Template recommends Imagen
+    Every tier accepts a reference image, so unlike the retired Imagen path
+    there is no tier that a reference image forces us away from.
     """
-    # Reference images require Gemini — Imagen doesn't support image input for generation
-    if reference_image:
-        if model == "imagen":
-            logger.warning(
-                "Reference image provided with model='imagen'. "
-                "Falling back to Gemini (Imagen does not support reference images)."
+    tier, alias_warning = resolve_image_tier(model)
+
+    extra = []
+    if alias_warning:
+        logger.info(alias_warning)
+        extra.append(
+            PromptValidationWarning(
+                alias_warning,
+                f"Use one of: {', '.join(MODEL_CHOICES_IMAGE)}.",
             )
-        return await generate_with_gemini(
-            client, prompt, aspect_ratio, cwd, use_profile, template, reference_image
         )
 
-    if model == "imagen":
-        return await generate_with_imagen(
-            client, prompt, count, aspect_ratio, cwd, use_profile, template
-        )
+    if tier == "auto":
+        tier = _select_tier(prompt, template)
 
-    if model == "gemini":
-        return await generate_with_gemini(
-            client, prompt, aspect_ratio, cwd, use_profile, template
-        )
-
-    # Auto selection
-    use_imagen = False
-
-    # Check if template recommends Imagen
-    if template and "/" in template:
-        from .prompt_engine import TEMPLATES
-
-        cat, key = template.split("/", 1)
-        tmpl = TEMPLATES.get(cat, {}).get(key, {})
-        if tmpl.get("recommended_model") == "imagen":
-            use_imagen = True
-
-    # Check prompt for quality indicators
-    quality_words = ["final", "production", "high quality", "polished", "publish", "hero image"]
-    if any(word in prompt.lower() for word in quality_words):
-        use_imagen = True
-
-    if use_imagen:
-        return await generate_with_imagen(
-            client, prompt, count, aspect_ratio, cwd, use_profile, template
-        )
-    else:
-        return await generate_with_gemini(
-            client, prompt, aspect_ratio, cwd, use_profile, template
-        )
+    return await generate_images(
+        client,
+        prompt,
+        tier=tier,
+        count=count,
+        aspect_ratio=aspect_ratio,
+        resolution=resolution,
+        cwd=cwd,
+        use_profile=use_profile,
+        template=template,
+        reference_image=reference_image,
+        extra_warnings=extra,
+    )

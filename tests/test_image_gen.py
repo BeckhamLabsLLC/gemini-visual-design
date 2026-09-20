@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gemini_visual_mcp.config import DEFAULT_ASPECT_RATIO
 from gemini_visual_mcp.image_gen import auto_generate
 
 
@@ -32,24 +33,34 @@ class TestAutoGenerate:
         assert len(results) == 1
 
     @pytest.mark.asyncio
-    async def test_auto_selects_imagen_for_final(self):
-        mock_client = MagicMock()
-        mock_client.generate_image_imagen = AsyncMock(
-            return_value=[{"data": b"fake-image", "mime_type": "image/png"}]
-        )
-
+    async def test_auto_selects_pro_for_final(self, mock_client, tmp_path):
         with patch("gemini_visual_mcp.image_gen.load_profile", return_value=None):
             with patch("gemini_visual_mcp.image_gen.save_generated") as mock_save:
-                mock_save.return_value = "/tmp/gen_test.png"
+                mock_save.return_value = tmp_path / "gen_test.png"
                 await auto_generate(
                     client=mock_client,
                     prompt="Final production hero image for the landing page",
                     model="auto",
-                    cwd="/tmp",
+                    cwd=str(tmp_path),
                     use_profile=False,
                 )
 
-        mock_client.generate_image_imagen.assert_called_once()
+        assert mock_client.generate_image_gemini.call_args.kwargs["tier"] == "pro"
+
+    @pytest.mark.asyncio
+    async def test_auto_selects_fast_for_ordinary_prompt(self, mock_client, tmp_path):
+        with patch("gemini_visual_mcp.image_gen.load_profile", return_value=None):
+            with patch("gemini_visual_mcp.image_gen.save_generated") as mock_save:
+                mock_save.return_value = tmp_path / "gen_test.png"
+                await auto_generate(
+                    client=mock_client,
+                    prompt="A sidebar navigation component with icons",
+                    model="auto",
+                    cwd=str(tmp_path),
+                    use_profile=False,
+                )
+
+        assert mock_client.generate_image_gemini.call_args.kwargs["tier"] == "fast"
 
     @pytest.mark.asyncio
     async def test_explicit_gemini_model(self):
@@ -72,25 +83,40 @@ class TestAutoGenerate:
         mock_client.generate_image_gemini.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_explicit_imagen_model(self):
-        mock_client = MagicMock()
-        mock_client.generate_image_imagen = AsyncMock(
-            return_value=[{"data": b"img", "mime_type": "image/png"}]
-        )
-
+    async def test_explicit_legacy_imagen_maps_to_pro(self, mock_client, tmp_path):
+        """Imagen 4 is retired; the old name must still work and warn."""
         with patch("gemini_visual_mcp.image_gen.load_profile", return_value=None):
             with patch("gemini_visual_mcp.image_gen.save_generated") as mock_save:
-                mock_save.return_value = "/tmp/gen_test.png"
-                await auto_generate(
+                mock_save.return_value = tmp_path / "gen_test.png"
+                results = await auto_generate(
                     client=mock_client,
                     prompt="A dashboard mockup design with modern styling",
                     model="imagen",
-                    count=2,
-                    cwd="/tmp",
+                    cwd=str(tmp_path),
                     use_profile=False,
                 )
 
-        mock_client.generate_image_imagen.assert_called_once()
+        assert mock_client.generate_image_gemini.call_args.kwargs["tier"] == "pro"
+        warnings = results[0]["warnings"]
+        assert any("legacy" in str(w).lower() for w in warnings)
+
+    @pytest.mark.asyncio
+    async def test_count_fans_out_to_separate_calls(self, mock_client, tmp_path):
+        """Image models reject candidate_count > 1, so count means N calls."""
+        with patch("gemini_visual_mcp.image_gen.load_profile", return_value=None):
+            with patch("gemini_visual_mcp.image_gen.save_generated") as mock_save:
+                mock_save.return_value = tmp_path / "gen_test.png"
+                results = await auto_generate(
+                    client=mock_client,
+                    prompt="A dashboard mockup design with modern styling",
+                    model="fast",
+                    count=3,
+                    cwd=str(tmp_path),
+                    use_profile=False,
+                )
+
+        assert mock_client.generate_image_gemini.call_count == 3
+        assert len(results) == 3
 
     @pytest.mark.asyncio
     async def test_reference_image_routes_to_gemini(self):
@@ -101,7 +127,9 @@ class TestAutoGenerate:
         )
 
         with patch("gemini_visual_mcp.image_gen.load_profile", return_value=None):
-            with patch("gemini_visual_mcp.image_gen.read_image", return_value=(b"ref", "image/png")):
+            with patch(
+                "gemini_visual_mcp.image_gen.read_image", return_value=(b"ref", "image/png")
+            ):
                 with patch("gemini_visual_mcp.image_gen.save_generated") as mock_save:
                     mock_save.return_value = "/tmp/gen_test.png"
                     await auto_generate(
@@ -120,29 +148,26 @@ class TestAutoGenerate:
         assert call_kwargs["reference_mime_type"] == "image/png"
 
     @pytest.mark.asyncio
-    async def test_reference_image_overrides_imagen(self):
-        """When model='imagen' but reference_image is provided, falls back to Gemini."""
-        mock_client = MagicMock()
-        mock_client.generate_image_gemini = AsyncMock(
-            return_value=[{"data": b"img", "mime_type": "image/png"}]
-        )
-        mock_client.generate_image_imagen = AsyncMock()
-
+    async def test_reference_image_keeps_pro_tier(self, mock_client, tmp_path):
+        """Every tier accepts a reference image now, so none is forced away."""
         with patch("gemini_visual_mcp.image_gen.load_profile", return_value=None):
-            with patch("gemini_visual_mcp.image_gen.read_image", return_value=(b"ref", "image/png")):
+            with patch(
+                "gemini_visual_mcp.image_gen.read_image", return_value=(b"ref", "image/png")
+            ):
                 with patch("gemini_visual_mcp.image_gen.save_generated") as mock_save:
-                    mock_save.return_value = "/tmp/gen_test.png"
+                    mock_save.return_value = tmp_path / "gen_test.png"
                     await auto_generate(
                         client=mock_client,
                         prompt="Final production character portrait design",
-                        model="imagen",
-                        cwd="/tmp",
+                        model="pro",
+                        cwd=str(tmp_path),
                         use_profile=False,
-                        reference_image="/tmp/ref.png",
+                        reference_image=str(tmp_path / "ref.png"),
                     )
 
-        mock_client.generate_image_gemini.assert_called_once()
-        mock_client.generate_image_imagen.assert_not_called()
+        kwargs = mock_client.generate_image_gemini.call_args.kwargs
+        assert kwargs["tier"] == "pro"
+        assert kwargs["reference_image_data"] == b"ref"
 
     @pytest.mark.asyncio
     async def test_reference_image_from_profile(self):
@@ -157,7 +182,9 @@ class TestAutoGenerate:
         with patch("gemini_visual_mcp.image_gen.load_profile", return_value=profile):
             with patch("gemini_visual_mcp.image_gen.Path") as mock_path:
                 mock_path.return_value.is_file.return_value = True
-                with patch("gemini_visual_mcp.image_gen.read_image", return_value=(b"ref", "image/png")):
+                with patch(
+                    "gemini_visual_mcp.image_gen.read_image", return_value=(b"ref", "image/png")
+                ):
                     with patch("gemini_visual_mcp.image_gen.save_generated") as mock_save:
                         mock_save.return_value = "/tmp/gen_test.png"
                         await auto_generate(
@@ -194,3 +221,45 @@ class TestAutoGenerate:
         call_kwargs = mock_client.generate_image_gemini.call_args.kwargs
         assert call_kwargs["reference_image_data"] is None
         assert call_kwargs["reference_mime_type"] is None
+
+
+class TestShapePrecedence:
+    """aspect_ratio / resolution: explicit > template > profile > default."""
+
+    async def _run(self, mock_client, tmp_path, profile=None, **kwargs):
+        with patch("gemini_visual_mcp.image_gen.load_profile", return_value=profile):
+            with patch("gemini_visual_mcp.image_gen.save_generated") as mock_save:
+                mock_save.return_value = tmp_path / "gen.png"
+                await auto_generate(
+                    client=mock_client,
+                    prompt="A settings gear icon, flat, single color",
+                    cwd=str(tmp_path),
+                    use_profile=profile is not None,
+                    **kwargs,
+                )
+        return mock_client.generate_image_gemini.call_args.kwargs
+
+    @pytest.mark.asyncio
+    async def test_template_aspect_ratio_is_applied(self, mock_client, tmp_path):
+        """An icons/* template asks for 1:1; it used to be computed and dropped."""
+        kwargs = await self._run(mock_client, tmp_path, template="icons/app-icon")
+        assert kwargs["aspect_ratio"] == "1:1"
+
+    @pytest.mark.asyncio
+    async def test_explicit_argument_beats_template(self, mock_client, tmp_path):
+        kwargs = await self._run(
+            mock_client, tmp_path, template="icons/app-icon", aspect_ratio="21:9"
+        )
+        assert kwargs["aspect_ratio"] == "21:9"
+
+    @pytest.mark.asyncio
+    async def test_profile_default_used_when_nothing_else_says(self, mock_client, tmp_path):
+        profile = {"default_aspect_ratio": "4:3", "default_resolution": "2K"}
+        kwargs = await self._run(mock_client, tmp_path, profile=profile)
+        assert kwargs["aspect_ratio"] == "4:3"
+        assert kwargs["resolution"] == "2K"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_global_default(self, mock_client, tmp_path):
+        kwargs = await self._run(mock_client, tmp_path)
+        assert kwargs["aspect_ratio"] == DEFAULT_ASPECT_RATIO

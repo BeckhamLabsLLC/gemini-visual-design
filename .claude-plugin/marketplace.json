@@ -1,0 +1,30 @@
+{
+  "name": "gemini-visual-design",
+  "owner": {
+    "name": "BeckhamLabs",
+    "url": "https://github.com/BeckhamLabsLLC"
+  },
+  "description": "Visual design tooling for Claude Code.",
+  "version": "1.1.0",
+  "plugins": [
+    {
+      "name": "gemini-visual-design",
+      "source": "./",
+      "description": "Generates mockups, icons, and video with Google Gemini in your project's own colors and fonts — auto-detected from your CSS — plus design critique that returns ready-to-run edit commands. 5 slash commands, 9 MCP tools, and a proactive visual-enhancer agent.",
+      "version": "1.1.0",
+      "author": {
+        "name": "BeckhamLabs",
+        "url": "https://github.com/BeckhamLabsLLC"
+      },
+      "homepage": "https://github.com/BeckhamLabsLLC/gemini-visual-design",
+      "repository": "https://github.com/BeckhamLabsLLC/gemini-visual-design",
+      "license": "MIT",
+      "keywords": [
+        "mcp", "claude-code", "gemini", "nano-banana", "veo",
+        "image-generation", "video-generation", "visual-design",
+        "design-system", "design-tokens"
+      ],
+      "category": "design"
+    }
+  ]
+}

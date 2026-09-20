@@ -36,8 +36,7 @@ def read_image(image_path: str) -> tuple[bytes, str]:
     ext = path.suffix.lower()
     if ext not in MIME_MAP:
         raise ValueError(
-            f"Unsupported image format: {ext or '(none)'}. "
-            f"Supported: {sorted(MIME_MAP.keys())}"
+            f"Unsupported image format: {ext or '(none)'}. Supported: {sorted(MIME_MAP.keys())}"
         )
     mime_type = MIME_MAP[ext]
 

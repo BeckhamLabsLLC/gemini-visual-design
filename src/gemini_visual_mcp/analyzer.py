@@ -5,11 +5,11 @@ critique with actionable improvement suggestions. Suggestions are formatted
 as edit_image-compatible instructions for direct follow-up.
 """
 
-import json
 import logging
 
 from .gemini_client import GeminiClient
 from .image_utils import read_image
+from .text_utils import parse_json_response
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +102,41 @@ PROJECT_CONTEXT = {
 }
 
 
+# The shape callers document and depend on. Passed to the API so the model
+# cannot return prose where a score is expected.
+ANALYSIS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "overall_score": {"type": "integer", "minimum": 1, "maximum": 10},
+        "summary": {"type": "string"},
+        "categories": {
+            "type": "object",
+            "properties": {
+                "color": {"type": "integer", "minimum": 1, "maximum": 10},
+                "layout": {"type": "integer", "minimum": 1, "maximum": 10},
+                "typography": {"type": "integer", "minimum": 1, "maximum": 10},
+                "hierarchy": {"type": "integer", "minimum": 1, "maximum": 10},
+            },
+        },
+        "issues": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "severity": {"type": "string", "enum": ["low", "medium", "high"]},
+                    "category": {"type": "string"},
+                    "description": {"type": "string"},
+                    "edit_instruction": {"type": "string"},
+                },
+                "required": ["severity", "description", "edit_instruction"],
+            },
+        },
+        "strengths": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["overall_score", "summary", "issues"],
+}
+
+
 async def analyze_design(
     client: GeminiClient,
     image_path: str,
@@ -128,35 +163,25 @@ async def analyze_design(
     project_context = PROJECT_CONTEXT.get(project_type, PROJECT_CONTEXT["general"])
     analysis_prompt = ANALYSIS_PROMPTS[focus].format(project_context=project_context)
 
+    # Constrain the model to the schema rather than parsing prose out of a
+    # code fence afterwards - critique with runnable edit instructions is only
+    # useful if it reliably comes back in the documented shape.
     raw_response = await client.analyze_image(
         image_data=image_data,
         mime_type=mime_type,
         analysis_prompt=analysis_prompt,
+        response_schema=ANALYSIS_SCHEMA,
     )
 
-    # Parse JSON from response
-    try:
-        # Try to extract JSON from the response (model may wrap it in markdown)
-        json_str = raw_response.strip()
-        if json_str.startswith("```"):
-            # Remove markdown code fence
-            lines = json_str.split("\n")
-            json_lines = []
-            in_fence = False
-            for line in lines:
-                if line.strip().startswith("```"):
-                    in_fence = not in_fence
-                    continue
-                if in_fence:
-                    json_lines.append(line)
-            json_str = "\n".join(json_lines)
-
-        analysis = json.loads(json_str)
-    except json.JSONDecodeError:
-        # Return raw text if JSON parsing fails
+    parsed, parse_error = parse_json_response(raw_response)
+    if isinstance(parsed, dict):
+        analysis = parsed
+    else:
         analysis = {
             "raw_analysis": raw_response,
-            "parse_error": "Could not parse structured analysis. Raw text returned.",
+            "parse_error": (
+                f"Could not parse structured analysis ({parse_error}). Raw text returned."
+            ),
         }
 
     analysis["image_path"] = image_path

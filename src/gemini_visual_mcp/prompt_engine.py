@@ -9,6 +9,8 @@ import logging
 import re
 from typing import Optional
 
+from .config import DEFAULT_IMAGE_TIER, MIN_PROMPT_LENGTH
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -17,7 +19,10 @@ logger = logging.getLogger(__name__)
 
 # Common negative phrases that should be rephrased positively
 NEGATIVE_PATTERNS = [
-    (r"\bno (\w+)", "Instead of 'no {0}', describe what IS there (e.g., 'empty {0}' or 'without {0}')"),
+    (
+        r"\bno (\w+)",
+        "Instead of 'no {0}', describe what IS there (e.g., 'empty {0}' or 'without {0}')",
+    ),
     (r"\bdon't\b", "Rephrase without 'don't' — describe the desired result positively"),
     (r"\bnot (\w+)", "Instead of 'not {0}', describe what you DO want"),
     (r"\bwithout any\b", "Consider describing the desired state instead of exclusions"),
@@ -55,9 +60,9 @@ def validate(prompt: str) -> list[PromptValidationWarning]:
 
     stripped = prompt.strip()
 
-    if len(stripped) < 10:
+    if len(stripped) < MIN_PROMPT_LENGTH:
         raise PromptValidationError(
-            f"Prompt is too short ({len(stripped)} chars). "
+            f"Prompt is too short ({len(stripped)} chars, minimum {MIN_PROMPT_LENGTH}). "
             "Provide a more detailed description to get useful results. "
             "Example: 'A modern dashboard with dark theme, showing analytics charts and a sidebar navigation'"
         )
@@ -112,7 +117,7 @@ TEMPLATES: dict[str, dict[str, dict]] = {
             },
             "aspect_ratio": "16:9",
             "resolution": "1K",
-            "recommended_model": "gemini",
+            "recommended_model": "fast",
         },
         "settings-page": {
             "name": "Settings Page",
@@ -130,7 +135,7 @@ TEMPLATES: dict[str, dict[str, dict]] = {
             },
             "aspect_ratio": "16:9",
             "resolution": "1K",
-            "recommended_model": "gemini",
+            "recommended_model": "fast",
         },
         "login-signup": {
             "name": "Login / Signup",
@@ -150,7 +155,7 @@ TEMPLATES: dict[str, dict[str, dict]] = {
             },
             "aspect_ratio": "16:9",
             "resolution": "1K",
-            "recommended_model": "gemini",
+            "recommended_model": "fast",
         },
         "ecommerce-product": {
             "name": "E-commerce Product Page",
@@ -168,7 +173,7 @@ TEMPLATES: dict[str, dict[str, dict]] = {
             },
             "aspect_ratio": "16:9",
             "resolution": "1K",
-            "recommended_model": "gemini",
+            "recommended_model": "fast",
         },
         "mobile-app": {
             "name": "Mobile App Screen",
@@ -187,7 +192,7 @@ TEMPLATES: dict[str, dict[str, dict]] = {
             },
             "aspect_ratio": "9:16",
             "resolution": "1K",
-            "recommended_model": "gemini",
+            "recommended_model": "fast",
         },
     },
     "game-assets": {
@@ -208,7 +213,7 @@ TEMPLATES: dict[str, dict[str, dict]] = {
             },
             "aspect_ratio": "1:1",
             "resolution": "1K",
-            "recommended_model": "gemini",
+            "recommended_model": "fast",
         },
         "environment-texture": {
             "name": "Environment Texture",
@@ -226,7 +231,7 @@ TEMPLATES: dict[str, dict[str, dict]] = {
             },
             "aspect_ratio": "1:1",
             "resolution": "1K",
-            "recommended_model": "imagen",
+            "recommended_model": "pro",
         },
         "item-icon": {
             "name": "Item Icon",
@@ -245,7 +250,7 @@ TEMPLATES: dict[str, dict[str, dict]] = {
             },
             "aspect_ratio": "1:1",
             "resolution": "1K",
-            "recommended_model": "gemini",
+            "recommended_model": "fast",
         },
         "background-scene": {
             "name": "Background Scene",
@@ -263,7 +268,7 @@ TEMPLATES: dict[str, dict[str, dict]] = {
             },
             "aspect_ratio": "16:9",
             "resolution": "2K",
-            "recommended_model": "imagen",
+            "recommended_model": "pro",
         },
         "ui-element": {
             "name": "Game UI Element",
@@ -281,7 +286,7 @@ TEMPLATES: dict[str, dict[str, dict]] = {
             },
             "aspect_ratio": "16:9",
             "resolution": "1K",
-            "recommended_model": "gemini",
+            "recommended_model": "fast",
         },
     },
     "landing-pages": {
@@ -301,7 +306,7 @@ TEMPLATES: dict[str, dict[str, dict]] = {
             },
             "aspect_ratio": "16:9",
             "resolution": "2K",
-            "recommended_model": "imagen",
+            "recommended_model": "pro",
         },
         "feature-showcase": {
             "name": "Feature Showcase",
@@ -321,7 +326,7 @@ TEMPLATES: dict[str, dict[str, dict]] = {
             },
             "aspect_ratio": "16:9",
             "resolution": "1K",
-            "recommended_model": "gemini",
+            "recommended_model": "fast",
         },
         "pricing-table": {
             "name": "Pricing Table",
@@ -340,7 +345,7 @@ TEMPLATES: dict[str, dict[str, dict]] = {
             },
             "aspect_ratio": "16:9",
             "resolution": "1K",
-            "recommended_model": "gemini",
+            "recommended_model": "fast",
         },
         "cta-section": {
             "name": "CTA Section",
@@ -357,7 +362,7 @@ TEMPLATES: dict[str, dict[str, dict]] = {
             },
             "aspect_ratio": "16:9",
             "resolution": "1K",
-            "recommended_model": "gemini",
+            "recommended_model": "fast",
         },
         "testimonial-area": {
             "name": "Testimonial Section",
@@ -375,7 +380,7 @@ TEMPLATES: dict[str, dict[str, dict]] = {
             },
             "aspect_ratio": "16:9",
             "resolution": "1K",
-            "recommended_model": "gemini",
+            "recommended_model": "fast",
         },
     },
     "web-components": {
@@ -396,7 +401,7 @@ TEMPLATES: dict[str, dict[str, dict]] = {
             },
             "aspect_ratio": "16:9",
             "resolution": "1K",
-            "recommended_model": "gemini",
+            "recommended_model": "fast",
         },
         "card-component": {
             "name": "Card Component",
@@ -416,7 +421,7 @@ TEMPLATES: dict[str, dict[str, dict]] = {
             },
             "aspect_ratio": "3:4",
             "resolution": "1K",
-            "recommended_model": "gemini",
+            "recommended_model": "fast",
         },
         "modal-dialog": {
             "name": "Modal Dialog",
@@ -435,7 +440,7 @@ TEMPLATES: dict[str, dict[str, dict]] = {
             },
             "aspect_ratio": "16:9",
             "resolution": "1K",
-            "recommended_model": "gemini",
+            "recommended_model": "fast",
         },
         "data-table": {
             "name": "Data Table",
@@ -454,7 +459,7 @@ TEMPLATES: dict[str, dict[str, dict]] = {
             },
             "aspect_ratio": "16:9",
             "resolution": "1K",
-            "recommended_model": "gemini",
+            "recommended_model": "fast",
         },
         "form-layout": {
             "name": "Form Layout",
@@ -474,7 +479,7 @@ TEMPLATES: dict[str, dict[str, dict]] = {
             },
             "aspect_ratio": "16:9",
             "resolution": "1K",
-            "recommended_model": "gemini",
+            "recommended_model": "fast",
         },
     },
     "icons": {
@@ -495,7 +500,7 @@ TEMPLATES: dict[str, dict[str, dict]] = {
             },
             "aspect_ratio": "1:1",
             "resolution": "1K",
-            "recommended_model": "imagen",
+            "recommended_model": "pro",
         },
         "feature-icon-set": {
             "name": "Feature Icon Set",
@@ -515,7 +520,7 @@ TEMPLATES: dict[str, dict[str, dict]] = {
             },
             "aspect_ratio": "16:9",
             "resolution": "1K",
-            "recommended_model": "gemini",
+            "recommended_model": "fast",
         },
         "illustration": {
             "name": "Illustration",
@@ -534,7 +539,7 @@ TEMPLATES: dict[str, dict[str, dict]] = {
             },
             "aspect_ratio": "1:1",
             "resolution": "1K",
-            "recommended_model": "imagen",
+            "recommended_model": "pro",
         },
         "pattern-texture": {
             "name": "Pattern / Texture",
@@ -552,7 +557,7 @@ TEMPLATES: dict[str, dict[str, dict]] = {
             },
             "aspect_ratio": "1:1",
             "resolution": "1K",
-            "recommended_model": "imagen",
+            "recommended_model": "pro",
         },
         "logo-concept": {
             "name": "Logo Concept",
@@ -571,7 +576,7 @@ TEMPLATES: dict[str, dict[str, dict]] = {
             },
             "aspect_ratio": "1:1",
             "resolution": "1K",
-            "recommended_model": "imagen",
+            "recommended_model": "pro",
         },
     },
 }
@@ -598,7 +603,7 @@ def get_templates(category: str = "all") -> list[dict]:
                     "placeholders": template["placeholders"],
                     "aspect_ratio": template["aspect_ratio"],
                     "resolution": template.get("resolution", "1K"),
-                    "recommended_model": template.get("recommended_model", "gemini"),
+                    "recommended_model": template.get("recommended_model", DEFAULT_IMAGE_TIER),
                 }
             )
 
@@ -621,7 +626,9 @@ def apply_template(
         Tuple of (filled prompt, template metadata dict)
     """
     if category not in TEMPLATES:
-        raise ValueError(f"Unknown template category: {category}. Available: {list(TEMPLATES.keys())}")
+        raise ValueError(
+            f"Unknown template category: {category}. Available: {list(TEMPLATES.keys())}"
+        )
 
     if template_key not in TEMPLATES[category]:
         available = list(TEMPLATES[category].keys())
@@ -639,7 +646,7 @@ def apply_template(
         "template": f"{category}/{template_key}",
         "aspect_ratio": template["aspect_ratio"],
         "resolution": template.get("resolution", "1K"),
-        "recommended_model": template.get("recommended_model", "gemini"),
+        "recommended_model": template.get("recommended_model", DEFAULT_IMAGE_TIER),
     }
 
     return prompt, metadata
@@ -649,7 +656,7 @@ def enhance(
     prompt: str,
     profile: Optional[dict] = None,
     template: Optional[str] = None,
-) -> tuple[str, list[PromptValidationWarning]]:
+) -> tuple[str, list[PromptValidationWarning], dict]:
     """Full prompt enhancement pipeline.
 
     1. Validate (may raise PromptValidationError)
@@ -663,7 +670,10 @@ def enhance(
         template: Optional "category/key" template identifier
 
     Returns:
-        Tuple of (enhanced prompt, list of warnings)
+        Tuple of (enhanced prompt, warnings, template metadata). The metadata
+        carries the template's aspect_ratio / resolution / recommended_model so
+        callers can honor them; an icon template asking for 1:1 is useless if
+        the caller still sends 16:9.
     """
     # Step 1: Validate
     warnings = validate(prompt)
@@ -696,7 +706,7 @@ def enhance(
     # Step 4: Add structural hints if the prompt seems bare
     prompt = _add_structural_hints(prompt)
 
-    return prompt, warnings
+    return prompt, warnings, template_meta
 
 
 def _add_structural_hints(prompt: str) -> str:

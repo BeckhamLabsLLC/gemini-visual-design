@@ -8,7 +8,7 @@ import logging
 from typing import Optional
 
 from .asset_manager import save_generated
-from .gemini_client import GeminiClient
+from .gemini_client import GeminiClient, GeminiClientError
 from .image_utils import read_image
 from .prompt_engine import enhance
 from .style_profile import load_profile
@@ -20,6 +20,8 @@ async def generate_video(
     client: GeminiClient,
     prompt: str,
     model: str = "veo-3.1-fast",
+    duration_seconds: int | None = None,
+    resolution: str | None = None,
     reference_image: Optional[str] = None,
     cwd: str = ".",
     use_profile: bool = True,
@@ -39,7 +41,7 @@ async def generate_video(
     """
     # Load profile and enhance prompt
     profile = load_profile(cwd) if use_profile else None
-    enhanced_prompt, warnings = enhance(prompt, profile=profile)
+    enhanced_prompt, warnings, _template_meta = enhance(prompt, profile=profile)
 
     # Read reference image if provided
     image_data = None
@@ -53,6 +55,8 @@ async def generate_video(
         model=model,
         image_data=image_data,
         image_mime_type=image_mime,
+        duration_seconds=duration_seconds,
+        resolution=resolution,
     )
 
     # Poll until complete
@@ -60,7 +64,7 @@ async def generate_video(
 
     # Save the first video result
     if not results:
-        raise RuntimeError("Video generation completed but returned no results")
+        raise GeminiClientError("Video generation completed but returned no results")
 
     result = results[0]
     metadata = {

@@ -1,9 +1,19 @@
 {
   "mcpServers": {
     "gemini-visual-design": {
-      "command": "python3",
-      "args": ["-m", "gemini_visual_mcp"],
-      "cwd": "${CLAUDE_PLUGIN_ROOT}/src"
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "${CLAUDE_PLUGIN_ROOT}",
+        "--quiet",
+        "python",
+        "-m",
+        "gemini_visual_mcp"
+      ],
+      "env": {
+        "PYTHONPATH": "${CLAUDE_PLUGIN_ROOT}/src"
+      }
     }
   }
 }

@@ -17,13 +17,15 @@ class TestAnalyzeDesign:
         img.write_bytes(b"fake-png")
 
         mock_client = MagicMock()
-        analysis_json = json.dumps({
-            "overall_score": 8,
-            "categories": {"color": {"score": 9, "summary": "Good"}},
-            "top_issues": [],
-            "strengths": ["Clean layout"],
-            "priority_improvements": [],
-        })
+        analysis_json = json.dumps(
+            {
+                "overall_score": 8,
+                "categories": {"color": {"score": 9, "summary": "Good"}},
+                "top_issues": [],
+                "strengths": ["Clean layout"],
+                "priority_improvements": [],
+            }
+        )
         mock_client.analyze_image = AsyncMock(return_value=analysis_json)
 
         result = await analyze_design(

@@ -9,12 +9,15 @@ import asyncio
 import json
 import logging
 import os
+import re
+import time
 from typing import Any
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
+from . import __version__
 from .analyzer import analyze_design
 from .asset_manager import (
     cleanup_old,
@@ -25,15 +28,24 @@ from .asset_manager import (
 from .config import (
     ANALYSIS_FOCUS_AREAS,
     ASPECT_RATIOS,
+    DEFAULT_IMAGE_TIER,
+    IMAGE_RESOLUTIONS,
     MODEL_CHOICES_IMAGE,
     MODEL_CHOICES_VIDEO,
     PROJECT_TYPES,
     TEMPLATE_CATEGORIES,
     TOKEN_FORMATS,
 )
-from .gemini_client import GeminiClient, GeminiClientError
+from .gemini_client import (
+    GeminiAuthError,
+    GeminiClient,
+    GeminiClientError,
+    GeminiContentPolicyError,
+    GeminiQuotaError,
+)
 from .image_edit import edit_image
 from .image_gen import auto_generate
+from .paths import ProjectRootError, resolve_project_root
 from .prompt_engine import (
     PromptValidationError,
     get_templates,
@@ -43,6 +55,7 @@ from .style_profile import (
     create_profile,
     load_profile,
 )
+from .text_utils import strip_code_fences
 from .video_gen import generate_video
 
 logging.basicConfig(level=logging.INFO)
@@ -53,8 +66,9 @@ class GeminiVisualDesignServer:
     """MCP Server for visual design with Gemini."""
 
     def __init__(self):
-        self._server = Server("gemini-visual-design")
-        self._client = None
+        self._server = Server("gemini-visual-design", version=__version__)
+        self._client: GeminiClient | None = None
+        self._last_cleanup = float("-inf")
         self._setup_handlers()
 
     def _get_client(self) -> GeminiClient:
@@ -63,329 +77,383 @@ class GeminiVisualDesignServer:
             self._client = GeminiClient()
         return self._client
 
-    def _cwd(self) -> str:
-        """Get the current working directory."""
-        return os.environ.get("PROJECT_DIR", os.getcwd())
+    async def _maybe_cleanup(self) -> None:
+        """Prune stale previews at most once an hour, off the event loop."""
+        now = time.monotonic()
+        if now - self._last_cleanup < 3600:
+            return
+        self._last_cleanup = now
+        try:
+            await asyncio.to_thread(cleanup_old)
+        except OSError as e:
+            logger.warning("Preview cleanup failed: %s", e)
+
+    def _cwd(self, strict: bool = False) -> str:
+        """Resolve the user's project root.
+
+        strict=True for operations that write into the project - refusing is
+        better than dropping a style profile inside the plugin itself.
+        """
+        root, _source = resolve_project_root(strict=strict)
+        return str(root)
 
     def _setup_handlers(self):
         """Register all MCP tool handlers."""
 
         @self._server.list_tools()
         async def list_tools() -> list[Tool]:
-            return [
-                Tool(
-                    name="generate_image",
-                    description=(
-                        "Generate images from text prompts, enhanced by the prompt engine "
-                        "and project style profile. Supports Gemini (fast drafts) and "
-                        "Imagen 4 (high quality finals). Use templates for proven prompt structures."
-                    ),
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "prompt": {
-                                "type": "string",
-                                "minLength": 10,
-                                "description": "Description of the image to generate (min 10 characters)",
-                            },
-                            "template": {
-                                "type": "string",
-                                "description": (
-                                    "Optional template as 'category/key' (e.g., 'ui-mockups/dashboard'). "
-                                    "Use get_prompt_templates to see available templates."
-                                ),
-                            },
-                            "model": {
-                                "type": "string",
-                                "enum": MODEL_CHOICES_IMAGE,
-                                "default": "auto",
-                                "description": (
-                                    "Model selection: 'gemini' (fast drafts), "
-                                    "'imagen' (high quality), 'auto' (smart selection)"
-                                ),
-                            },
-                            "aspect_ratio": {
-                                "type": "string",
-                                "enum": ASPECT_RATIOS,
-                                "default": "16:9",
-                                "description": "Image aspect ratio",
-                            },
-                            "count": {
-                                "type": "integer",
-                                "minimum": 1,
-                                "maximum": 4,
-                                "default": 1,
-                                "description": "Number of images to generate (Imagen only)",
-                            },
-                            "use_profile": {
-                                "type": "boolean",
-                                "default": True,
-                                "description": "Apply project style profile to the prompt",
-                            },
-                            "reference_image": {
-                                "type": "string",
-                                "minLength": 1,
-                                "description": (
-                                    "Path to an existing image to use as a style reference. "
-                                    "The new image will match the reference's art style, colors, "
-                                    "and visual feel while depicting what the prompt describes. "
-                                    "Use this for visual consistency (e.g., game characters in the same style). "
-                                    "Auto-selects Gemini model when provided."
-                                ),
-                            },
-                        },
-                        "required": ["prompt"],
-                    },
-                ),
-                Tool(
-                    name="edit_image",
-                    description=(
-                        "Edit an existing image with natural language instructions. "
-                        "Preferred over regenerating — builds on previous results. "
-                        "Keeps the original file intact."
-                    ),
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "image_path": {
-                                "type": "string",
-                                "minLength": 1,
-                                "description": "Path to the image to edit",
-                            },
-                            "instruction": {
-                                "type": "string",
-                                "minLength": 10,
-                                "description": "Natural language edit instruction, e.g., 'Change the button color to blue' (min 10 characters)",
-                            },
-                            "preserve_style": {
-                                "type": "boolean",
-                                "default": True,
-                                "description": "Apply project style profile context to the edit",
-                            },
-                        },
-                        "required": ["image_path", "instruction"],
-                    },
-                ),
-                Tool(
-                    name="analyze_design",
-                    description=(
-                        "Visual design critique with scored categories and actionable "
-                        "improvement suggestions. Each suggestion includes an edit instruction "
-                        "that can be fed directly to edit_image."
-                    ),
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "image_path": {
-                                "type": "string",
-                                "minLength": 1,
-                                "description": "Path to the design image or screenshot to analyze",
-                            },
-                            "focus": {
-                                "type": "string",
-                                "enum": ANALYSIS_FOCUS_AREAS,
-                                "default": "overall",
-                                "description": "Analysis focus area",
-                            },
-                            "project_type": {
-                                "type": "string",
-                                "enum": PROJECT_TYPES,
-                                "default": "general",
-                                "description": "Project type for context-aware analysis",
-                            },
-                        },
-                        "required": ["image_path"],
-                    },
-                ),
-                Tool(
-                    name="generate_video",
-                    description=(
-                        "Generate short video clips using Veo models. "
-                        "Supports text-to-video and image-to-video with async polling."
-                    ),
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "prompt": {
-                                "type": "string",
-                                "minLength": 10,
-                                "description": "Description of the video to generate (min 10 characters)",
-                            },
-                            "model": {
-                                "type": "string",
-                                "enum": MODEL_CHOICES_VIDEO,
-                                "default": "veo-3.1-fast",
-                                "description": "Video model: 'veo-3.1' (best quality) or 'veo-3.1-fast' (faster iteration)",
-                            },
-                            "reference_image": {
-                                "type": "string",
-                                "minLength": 1,
-                                "description": "Optional path to reference image for image-to-video",
-                            },
-                        },
-                        "required": ["prompt"],
-                    },
-                ),
-                Tool(
-                    name="save_asset",
-                    description=(
-                        "Save a generated asset from the temp preview directory "
-                        "to your project directory."
-                    ),
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "temp_path": {
-                                "type": "string",
-                                "minLength": 1,
-                                "description": "Path to the file in the preview directory",
-                            },
-                            "destination_dir": {
-                                "type": "string",
-                                "minLength": 1,
-                                "description": "Target directory in your project",
-                            },
-                            "filename": {
-                                "type": "string",
-                                "minLength": 1,
-                                "description": "Desired filename, e.g., 'hero-image.png' (must not contain path separators that escape destination_dir)",
-                            },
-                        },
-                        "required": ["temp_path", "destination_dir", "filename"],
-                    },
-                ),
-                Tool(
-                    name="list_generated",
-                    description=(
-                        "List all generated assets in the temp preview directory "
-                        "with metadata (prompt, model, timestamp)."
-                    ),
-                    inputSchema={
-                        "type": "object",
-                        "properties": {},
-                    },
-                ),
-                Tool(
-                    name="generate_design_tokens",
-                    description=(
-                        "Generate design system tokens (colors, typography, spacing) "
-                        "from a description or reference image. Outputs as CSS, Tailwind, JSON, or SCSS."
-                    ),
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "description": {
-                                "type": "string",
-                                "minLength": 10,
-                                "description": "Description of the desired design system — mood, brand, style (min 10 characters)",
-                            },
-                            "reference_image": {
-                                "type": "string",
-                                "minLength": 1,
-                                "description": "Optional path to reference image to extract design tokens from",
-                            },
-                            "format": {
-                                "type": "string",
-                                "enum": TOKEN_FORMATS,
-                                "default": "css",
-                                "description": "Output format for design tokens",
-                            },
-                        },
-                        "required": ["description"],
-                    },
-                ),
-                Tool(
-                    name="init_style_profile",
-                    description=(
-                        "Create or update the project's style profile. "
-                        "Optionally auto-detects settings from existing CSS/Tailwind config."
-                    ),
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "project_type": {
-                                "type": "string",
-                                "enum": ["game", "landing-page", "web-app"],
-                                "description": "Type of project",
-                            },
-                            "auto_detect": {
-                                "type": "boolean",
-                                "default": True,
-                                "description": "Scan existing CSS/config files to pre-fill the profile",
-                            },
-                            "colors": {
-                                "type": "object",
-                                "description": "Color overrides: {primary, secondary, background, surface, text}",
-                            },
-                            "typography": {
-                                "type": "object",
-                                "description": "Typography: {style, heading_font, body_font}",
-                            },
-                            "visual_style": {
-                                "type": "string",
-                                "description": "Visual style description (e.g., 'clean, minimal, dark mode')",
-                            },
-                            "framework": {
-                                "type": "string",
-                                "description": "Framework (e.g., 'React + Tailwind CSS')",
-                            },
-                            "design_system": {
-                                "type": "string",
-                                "description": "Design system (e.g., 'Material Design 3', 'custom')",
-                            },
-                            "reference_image": {
-                                "type": "string",
-                                "description": (
-                                    "Path to a default reference image for style consistency. "
-                                    "When set, all image generations will match this image's style "
-                                    "unless overridden by an explicit reference_image in generate_image."
-                                ),
-                            },
-                        },
-                        "required": ["project_type"],
-                    },
-                ),
-                Tool(
-                    name="get_prompt_templates",
-                    description=(
-                        "List available prompt templates by category. "
-                        "Templates provide proven prompt structures for common design tasks."
-                    ),
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "category": {
-                                "type": "string",
-                                "enum": TEMPLATE_CATEGORIES + ["all"],
-                                "default": "all",
-                                "description": "Template category to filter by",
-                            },
-                        },
-                    },
-                ),
-            ]
+            return self.tool_definitions()
 
         @self._server.call_tool()
         async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-            try:
-                result = await self._handle_tool(name, arguments)
-                return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
-            except PromptValidationError as e:
-                return [TextContent(type="text", text=json.dumps({"error": str(e), "type": "validation"}, indent=2))]
-            except GeminiClientError as e:
-                return [TextContent(type="text", text=json.dumps({"error": str(e), "type": "api_error"}, indent=2))]
-            except FileNotFoundError as e:
-                return [TextContent(type="text", text=json.dumps({"error": str(e), "type": "file_not_found"}, indent=2))]
-            except ValueError as e:
-                # Raised by image_utils for unsupported MIME and asset_manager
-                # for path-traversal attempts. These are user errors, not bugs.
-                return [TextContent(type="text", text=json.dumps({"error": str(e), "type": "invalid_argument"}, indent=2))]
-            except Exception:
-                # Truly unexpected — log the full traceback and re-raise so the
-                # MCP framework surfaces it to the client. We want bugs to be
-                # noisy, not silently wrapped as a generic error string.
-                logger.exception(f"Unexpected error in tool {name}")
-                raise
+            return await self._dispatch(name, arguments)
+
+    def tool_definitions(self) -> list[Tool]:
+        """The tools this server advertises."""
+        return [
+            Tool(
+                name="generate_image",
+                description=(
+                    "Generate images from text prompts, enhanced by the prompt engine "
+                    "and project style profile. Three quality/cost tiers: 'draft' "
+                    "(cheapest), 'fast' (default), 'pro' (finals, legible text). "
+                    "Use templates for proven prompt structures."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "prompt": {
+                            "type": "string",
+                            "minLength": 10,
+                            "description": "Description of the image to generate (min 10 characters)",
+                        },
+                        "template": {
+                            "type": "string",
+                            "description": (
+                                "Optional template as 'category/key' (e.g., 'ui-mockups/dashboard'). "
+                                "Use get_prompt_templates to see available templates."
+                            ),
+                        },
+                        "model": {
+                            "type": "string",
+                            "enum": MODEL_CHOICES_IMAGE,
+                            "default": "auto",
+                            "description": (
+                                "Quality tier: 'draft' (~$0.03/image, throwaway "
+                                "iteration), 'fast' (~$0.07, default), 'pro' "
+                                "(~$0.13, finals with legible text), 'auto' "
+                                "(picks 'pro' for finals, else 'fast')"
+                            ),
+                        },
+                        "aspect_ratio": {
+                            "type": "string",
+                            "enum": ASPECT_RATIOS,
+                            "description": (
+                                "Image aspect ratio. Defaults to the template's, "
+                                "then the style profile's, then 16:9."
+                            ),
+                        },
+                        "resolution": {
+                            "type": "string",
+                            "enum": IMAGE_RESOLUTIONS,
+                            "description": (
+                                "Output resolution. Higher costs more and is "
+                                "clamped to what the tier supports "
+                                "(draft=1K, fast=2K, pro=4K)."
+                            ),
+                        },
+                        "count": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 4,
+                            "default": 1,
+                            "description": (
+                                "Number of images to generate. Each one is a "
+                                "separate billed API call."
+                            ),
+                        },
+                        "use_profile": {
+                            "type": "boolean",
+                            "default": True,
+                            "description": "Apply project style profile to the prompt",
+                        },
+                        "reference_image": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": (
+                                "Path to an existing image to use as a style reference. "
+                                "The new image will match the reference's art style, colors, "
+                                "and visual feel while depicting what the prompt describes. "
+                                "Use this for visual consistency (e.g., game characters in the same style). "
+                                "Works with every tier."
+                            ),
+                        },
+                    },
+                    "required": ["prompt"],
+                },
+            ),
+            Tool(
+                name="edit_image",
+                description=(
+                    "Edit an existing image with natural language instructions. "
+                    "Preferred over regenerating — builds on previous results. "
+                    "Keeps the original file intact."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "image_path": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Path to the image to edit",
+                        },
+                        "instruction": {
+                            "type": "string",
+                            "minLength": 10,
+                            "description": "Natural language edit instruction, e.g., 'Change the button color to blue' (min 10 characters)",
+                        },
+                        "preserve_style": {
+                            "type": "boolean",
+                            "default": True,
+                            "description": "Apply project style profile context to the edit",
+                        },
+                    },
+                    "required": ["image_path", "instruction"],
+                },
+            ),
+            Tool(
+                name="analyze_design",
+                description=(
+                    "Visual design critique with scored categories and actionable "
+                    "improvement suggestions. Each suggestion includes an edit instruction "
+                    "that can be fed directly to edit_image."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "image_path": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Path to the design image or screenshot to analyze",
+                        },
+                        "focus": {
+                            "type": "string",
+                            "enum": ANALYSIS_FOCUS_AREAS,
+                            "default": "overall",
+                            "description": "Analysis focus area",
+                        },
+                        "project_type": {
+                            "type": "string",
+                            "enum": PROJECT_TYPES,
+                            "default": "general",
+                            "description": "Project type for context-aware analysis",
+                        },
+                    },
+                    "required": ["image_path"],
+                },
+            ),
+            Tool(
+                name="generate_video",
+                description=(
+                    "Generate short video clips using Veo models. "
+                    "Supports text-to-video and image-to-video with async polling."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "prompt": {
+                            "type": "string",
+                            "minLength": 10,
+                            "description": "Description of the video to generate (min 10 characters)",
+                        },
+                        "model": {
+                            "type": "string",
+                            "enum": MODEL_CHOICES_VIDEO,
+                            "default": "veo-3.1-fast",
+                            "description": "Video model: 'veo-3.1' (best quality) or 'veo-3.1-fast' (faster iteration)",
+                        },
+                        "reference_image": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Optional path to reference image for image-to-video",
+                        },
+                    },
+                    "required": ["prompt"],
+                },
+            ),
+            Tool(
+                name="save_asset",
+                description=(
+                    "Save a generated asset from the temp preview directory "
+                    "to your project directory."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "temp_path": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Path to the file in the preview directory",
+                        },
+                        "destination_dir": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Target directory in your project",
+                        },
+                        "filename": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Desired filename, e.g., 'hero-image.png' (must not contain path separators that escape destination_dir)",
+                        },
+                    },
+                    "required": ["temp_path", "destination_dir", "filename"],
+                },
+            ),
+            Tool(
+                name="list_generated",
+                description=(
+                    "List all generated assets in the temp preview directory "
+                    "with metadata (prompt, model, timestamp)."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                },
+            ),
+            Tool(
+                name="generate_design_tokens",
+                description=(
+                    "Generate design system tokens (colors, typography, spacing) "
+                    "from a description or reference image. Outputs as CSS, Tailwind, JSON, or SCSS."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "description": {
+                            "type": "string",
+                            "minLength": 10,
+                            "description": "Description of the desired design system — mood, brand, style (min 10 characters)",
+                        },
+                        "reference_image": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Optional path to reference image to extract design tokens from",
+                        },
+                        "format": {
+                            "type": "string",
+                            "enum": TOKEN_FORMATS,
+                            "default": "css",
+                            "description": "Output format for design tokens",
+                        },
+                    },
+                    "required": ["description"],
+                },
+            ),
+            Tool(
+                name="init_style_profile",
+                description=(
+                    "Create or update the project's style profile. "
+                    "Optionally auto-detects settings from existing CSS/Tailwind config."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "project_type": {
+                            "type": "string",
+                            "enum": PROJECT_TYPES,
+                            "description": "Type of project",
+                        },
+                        "auto_detect": {
+                            "type": "boolean",
+                            "default": True,
+                            "description": "Scan existing CSS/config files to pre-fill the profile",
+                        },
+                        "colors": {
+                            "type": "object",
+                            "description": "Color overrides: {primary, secondary, background, surface, text}",
+                        },
+                        "typography": {
+                            "type": "object",
+                            "description": "Typography: {style, heading_font, body_font}",
+                        },
+                        "visual_style": {
+                            "type": "string",
+                            "description": "Visual style description (e.g., 'clean, minimal, dark mode')",
+                        },
+                        "framework": {
+                            "type": "string",
+                            "description": "Framework (e.g., 'React + Tailwind CSS')",
+                        },
+                        "design_system": {
+                            "type": "string",
+                            "description": "Design system (e.g., 'Material Design 3', 'custom')",
+                        },
+                        "reference_image": {
+                            "type": "string",
+                            "description": (
+                                "Path to a default reference image for style consistency. "
+                                "When set, all image generations will match this image's style "
+                                "unless overridden by an explicit reference_image in generate_image."
+                            ),
+                        },
+                    },
+                    "required": ["project_type"],
+                },
+            ),
+            Tool(
+                name="get_prompt_templates",
+                description=(
+                    "List available prompt templates by category. "
+                    "Templates provide proven prompt structures for common design tasks."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "category": {
+                            "type": "string",
+                            "enum": TEMPLATE_CATEGORIES + ["all"],
+                            "default": "all",
+                            "description": "Template category to filter by",
+                        },
+                    },
+                },
+            ),
+        ]
+
+    @staticmethod
+    def _error(message: str, kind: str) -> list[TextContent]:
+        return [
+            TextContent(type="text", text=json.dumps({"error": message, "type": kind}, indent=2))
+        ]
+
+    async def _dispatch(self, name: str, arguments: dict) -> list[TextContent]:
+        """Run a tool and map errors onto stable, actionable response types."""
+        try:
+            result = await self._handle_tool(name, arguments)
+            return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+        except PromptValidationError as e:
+            return self._error(str(e), "validation")
+        except GeminiAuthError as e:
+            return self._error(str(e), "auth_error")
+        except GeminiQuotaError as e:
+            return self._error(str(e), "quota_error")
+        except GeminiContentPolicyError as e:
+            return self._error(str(e), "content_policy")
+        except GeminiClientError as e:
+            return self._error(str(e), "api_error")
+        except ProjectRootError as e:
+            return self._error(str(e), "no_project_root")
+        except FileNotFoundError as e:
+            return self._error(str(e), "file_not_found")
+        except ValueError as e:
+            # Unsupported MIME types, path-traversal rejections, unknown tool
+            # names. User errors, not bugs.
+            return self._error(str(e), "invalid_argument")
+        except Exception:
+            # Truly unexpected - log the full traceback and re-raise so the
+            # MCP framework surfaces it. We want bugs to be noisy.
+            logger.exception(f"Unexpected error in tool {name}")
+            raise
 
     async def _handle_tool(self, name: str, args: dict) -> Any:
         """Route tool calls to the appropriate handler."""
@@ -397,21 +465,24 @@ class GeminiVisualDesignServer:
                 prompt=args["prompt"],
                 model=args.get("model", "auto"),
                 count=args.get("count", 1),
-                aspect_ratio=args.get("aspect_ratio", "16:9"),
+                aspect_ratio=args.get("aspect_ratio"),
+                resolution=args.get("resolution"),
                 cwd=self._cwd(),
                 use_profile=args.get("use_profile", True),
                 template=args.get("template"),
                 reference_image=args.get("reference_image"),
             )
-            # Clean up old previews on generation
-            cleanup_old()
+            # Prune old previews occasionally - not on every generation.
+            await self._maybe_cleanup()
             return {
                 "generated": [
                     {
                         "path": r["path"],
                         "model": r["model"],
+                        "tier": r.get("tier"),
                         "enhanced_prompt": r["enhanced_prompt"],
                         "warnings": r["warnings"],
+                        **({"model_notes": r["text"]} if r.get("text") else {}),
                     }
                     for r in results
                 ],
@@ -427,12 +498,14 @@ class GeminiVisualDesignServer:
                 instruction=args["instruction"],
                 cwd=self._cwd(),
                 preserve_style=args.get("preserve_style", True),
+                model=args.get("model", DEFAULT_IMAGE_TIER),
             )
             return {
                 "edited_path": result["path"],
                 "original_path": result["original_path"],
                 "instruction": result["instruction"],
                 "model": result["model"],
+                **({"model_notes": result["text"]} if result.get("text") else {}),
                 "tip": "Original preserved. Use edit_image again to further refine.",
             }
 
@@ -468,6 +541,7 @@ class GeminiVisualDesignServer:
                 temp_path=args["temp_path"],
                 dest_dir=args["destination_dir"],
                 filename=args["filename"],
+                project_root=self._cwd(strict=True),
             )
             return {
                 "saved_path": str(path),
@@ -492,7 +566,9 @@ class GeminiVisualDesignServer:
             )
 
         elif name == "init_style_profile":
-            return self._init_style_profile(
+            # auto_detect walks the project's CSS tree; keep it off the loop.
+            return await asyncio.to_thread(
+                self._init_style_profile,
                 project_type=args["project_type"],
                 auto_detect=args.get("auto_detect", True),
                 colors=args.get("colors"),
@@ -513,7 +589,7 @@ class GeminiVisualDesignServer:
             }
 
         else:
-            return {"error": f"Unknown tool: {name}"}
+            raise ValueError(f"Unknown tool: {name}")
 
     async def _generate_design_tokens(
         self,
@@ -537,10 +613,9 @@ Return ONLY the {token_format} code, no explanations."""
         if reference_image:
             from .image_utils import read_image
 
-            try:
-                img_data, mime = read_image(reference_image)
-            except FileNotFoundError:
-                img_data = None
+            # A missing reference image is a user error worth reporting -
+            # silently producing text-only tokens is not what was asked for.
+            img_data, mime = read_image(reference_image)
 
             if img_data:
                 prompt = f"""Analyze this reference image and extract a design token set. {description}
@@ -559,43 +634,27 @@ Return ONLY the {token_format} code, no explanations."""
         else:
             raw = await client.generate_text(prompt)
 
-        # Clean up code fences
-        tokens_code = raw.strip()
-        if tokens_code.startswith("```"):
-            lines = tokens_code.split("\n")
-            clean_lines = []
-            in_fence = False
-            for line in lines:
-                if line.strip().startswith("```"):
-                    in_fence = not in_fence
-                    continue
-                if in_fence:
-                    clean_lines.append(line)
-            tokens_code = "\n".join(clean_lines)
+        tokens_code = strip_code_fences(raw)
 
         # Update style profile with extracted colors if possible
         cwd = self._cwd()
         profile = load_profile(cwd)
+        profile_updated = False
         if profile:
-            # Try to extract colors to update profile
-            import re
-
             hex_colors = re.findall(r"#[0-9a-fA-F]{6}", tokens_code)
             if len(hex_colors) >= 3:
                 from .style_profile import update_profile
 
                 color_keys = ["primary", "secondary", "background", "surface", "text"]
-                color_update = {}
-                for i, color in enumerate(hex_colors[:5]):
-                    if i < len(color_keys):
-                        color_update[color_keys[i]] = color
+                color_update = {key: color for key, color in zip(color_keys, hex_colors[:5])}
                 update_profile(cwd, {"colors": color_update})
+                profile_updated = True
 
         return {
             "tokens": tokens_code,
             "format": token_format,
             "description": description,
-            "profile_updated": profile is not None,
+            "profile_updated": profile_updated,
         }
 
     def _init_style_profile(
@@ -667,8 +726,6 @@ Return ONLY the {token_format} code, no explanations."""
 
 def main():
     """Entry point for the MCP server."""
-    from . import __version__
-
     api_key_status = "[set]" if os.environ.get("GEMINI_API_KEY") else "[missing]"
     tools = [
         "generate_image",

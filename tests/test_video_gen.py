@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gemini_visual_mcp.gemini_client import GeminiClientError
 from gemini_visual_mcp.video_gen import generate_video
 
 
@@ -107,14 +108,14 @@ class TestGenerateVideo:
         assert result["model"] == "veo-3.1"
 
     @pytest.mark.asyncio
-    async def test_no_results_raises_runtime_error(self, tmp_path):
+    async def test_no_results_raises_client_error(self, tmp_path):
         mock_client = MagicMock()
         mock_operation = MagicMock()
         mock_client.generate_video = AsyncMock(return_value=mock_operation)
         mock_client.poll_video_operation = AsyncMock(return_value=[])
 
         with patch("gemini_visual_mcp.video_gen.load_profile", return_value=None):
-            with pytest.raises(RuntimeError, match="no results"):
+            with pytest.raises(GeminiClientError, match="no results"):
                 await generate_video(
                     client=mock_client,
                     prompt="A timelapse of clouds moving over a cityscape with dramatic lighting",
