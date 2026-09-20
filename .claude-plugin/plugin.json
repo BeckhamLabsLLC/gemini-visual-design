@@ -23,5 +23,8 @@
     "design-system",
     "design-tokens",
     "design-analysis"
-  ]
+  ],
+  "experimental": {
+    "evals": "evals"
+  }
 }

@@ -37,5 +37,17 @@ MCP server (`src/gemini_visual_mcp/`) with these modules:
 
 ```bash
 pytest tests/ -v
-ruff check src/ tests/
+ruff check src/ tests/ && ruff format --check src/ tests/
 ```
+
+Four layers, each catching what the one above it structurally cannot:
+
+| Command | Catches | Cost |
+|---|---|---|
+| `pytest tests/ -v` | Logic. Note most tests mock mcp's `Server`, so they cannot see a handler that was never registered — `tests/test_protocol.py` uses a real one | free |
+| `python scripts/check_protocol.py` | The launch command, dependency resolution, and MCP wiring, by speaking stdio to the process `.mcp.json` actually starts | free |
+| `python scripts/smoke_live.py` | Retired model IDs and whether `image_config` is really honored. Mocks cannot tell you Google deleted a model | ~$0.80 |
+| `claude plugin eval .` | Whether Claude *reaches for* the tools, vs. just whether they work | ~$0.13/run |
+
+Run `check_protocol.py` after touching `.mcp.json`, `server.py`, or dependencies;
+`smoke_live.py` after touching model IDs or `gemini_client.py`.
