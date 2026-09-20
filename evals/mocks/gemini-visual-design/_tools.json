@@ -1,0 +1,318 @@
+{
+  "tools": [
+    {
+      "name": "generate_image",
+      "description": "Generate images from text prompts, enhanced by the prompt engine and project style profile. Three quality/cost tiers: 'draft' (cheapest), 'fast' (default), 'pro' (finals, legible text). Use templates for proven prompt structures.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "minLength": 10,
+            "description": "Description of the image to generate (min 10 characters)"
+          },
+          "template": {
+            "type": "string",
+            "description": "Optional template as 'category/key' (e.g., 'ui-mockups/dashboard'). Use get_prompt_templates to see available templates."
+          },
+          "model": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "fast",
+              "pro",
+              "auto"
+            ],
+            "default": "auto",
+            "description": "Quality tier: 'draft' (~$0.03/image, throwaway iteration), 'fast' (~$0.07, default), 'pro' (~$0.13, finals with legible text), 'auto' (picks 'pro' for finals, else 'fast')"
+          },
+          "aspect_ratio": {
+            "type": "string",
+            "enum": [
+              "1:1",
+              "2:3",
+              "3:2",
+              "3:4",
+              "4:3",
+              "9:16",
+              "16:9",
+              "21:9"
+            ],
+            "description": "Image aspect ratio. Defaults to the template's, then the style profile's, then 16:9."
+          },
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "1K",
+              "2K",
+              "4K"
+            ],
+            "description": "Output resolution. Higher costs more and is clamped to what the tier supports (draft=1K, fast=2K, pro=4K)."
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4,
+            "default": 1,
+            "description": "Number of images to generate. Each one is a separate billed API call."
+          },
+          "use_profile": {
+            "type": "boolean",
+            "default": true,
+            "description": "Apply project style profile to the prompt"
+          },
+          "reference_image": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Path to an existing image to use as a style reference. The new image will match the reference's art style, colors, and visual feel while depicting what the prompt describes. Use this for visual consistency (e.g., game characters in the same style). Works with every tier."
+          }
+        },
+        "required": [
+          "prompt"
+        ]
+      }
+    },
+    {
+      "name": "edit_image",
+      "description": "Edit an existing image with natural language instructions. Preferred over regenerating \u2014 builds on previous results. Keeps the original file intact.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "image_path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Path to the image to edit"
+          },
+          "instruction": {
+            "type": "string",
+            "minLength": 10,
+            "description": "Natural language edit instruction, e.g., 'Change the button color to blue' (min 10 characters)"
+          },
+          "preserve_style": {
+            "type": "boolean",
+            "default": true,
+            "description": "Apply project style profile context to the edit"
+          }
+        },
+        "required": [
+          "image_path",
+          "instruction"
+        ]
+      }
+    },
+    {
+      "name": "analyze_design",
+      "description": "Visual design critique with scored categories and actionable improvement suggestions. Each suggestion includes an edit instruction that can be fed directly to edit_image.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "image_path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Path to the design image or screenshot to analyze"
+          },
+          "focus": {
+            "type": "string",
+            "enum": [
+              "color",
+              "layout",
+              "typography",
+              "overall"
+            ],
+            "default": "overall",
+            "description": "Analysis focus area"
+          },
+          "project_type": {
+            "type": "string",
+            "enum": [
+              "game",
+              "landing-page",
+              "web-app",
+              "general"
+            ],
+            "default": "general",
+            "description": "Project type for context-aware analysis"
+          }
+        },
+        "required": [
+          "image_path"
+        ]
+      }
+    },
+    {
+      "name": "generate_video",
+      "description": "Generate short video clips using Veo models. Supports text-to-video and image-to-video with async polling.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "minLength": 10,
+            "description": "Description of the video to generate (min 10 characters)"
+          },
+          "model": {
+            "type": "string",
+            "enum": [
+              "veo-3.1",
+              "veo-3.1-fast",
+              "veo-3.1-lite"
+            ],
+            "default": "veo-3.1-fast",
+            "description": "Video model: 'veo-3.1' (best quality) or 'veo-3.1-fast' (faster iteration)"
+          },
+          "reference_image": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Optional path to reference image for image-to-video"
+          }
+        },
+        "required": [
+          "prompt"
+        ]
+      }
+    },
+    {
+      "name": "save_asset",
+      "description": "Save a generated asset from the temp preview directory to your project directory.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "temp_path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Path to the file in the preview directory"
+          },
+          "destination_dir": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Target directory in your project"
+          },
+          "filename": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Desired filename, e.g., 'hero-image.png' (must not contain path separators that escape destination_dir)"
+          }
+        },
+        "required": [
+          "temp_path",
+          "destination_dir",
+          "filename"
+        ]
+      }
+    },
+    {
+      "name": "list_generated",
+      "description": "List all generated assets in the temp preview directory with metadata (prompt, model, timestamp).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "generate_design_tokens",
+      "description": "Generate design system tokens (colors, typography, spacing) from a description or reference image. Outputs as CSS, Tailwind, JSON, or SCSS.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string",
+            "minLength": 10,
+            "description": "Description of the desired design system \u2014 mood, brand, style (min 10 characters)"
+          },
+          "reference_image": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Optional path to reference image to extract design tokens from"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "css",
+              "tailwind",
+              "json",
+              "scss"
+            ],
+            "default": "css",
+            "description": "Output format for design tokens"
+          }
+        },
+        "required": [
+          "description"
+        ]
+      }
+    },
+    {
+      "name": "init_style_profile",
+      "description": "Create or update the project's style profile. Optionally auto-detects settings from existing CSS/Tailwind config.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_type": {
+            "type": "string",
+            "enum": [
+              "game",
+              "landing-page",
+              "web-app",
+              "general"
+            ],
+            "description": "Type of project"
+          },
+          "auto_detect": {
+            "type": "boolean",
+            "default": true,
+            "description": "Scan existing CSS/config files to pre-fill the profile"
+          },
+          "colors": {
+            "type": "object",
+            "description": "Color overrides: {primary, secondary, background, surface, text}"
+          },
+          "typography": {
+            "type": "object",
+            "description": "Typography: {style, heading_font, body_font}"
+          },
+          "visual_style": {
+            "type": "string",
+            "description": "Visual style description (e.g., 'clean, minimal, dark mode')"
+          },
+          "framework": {
+            "type": "string",
+            "description": "Framework (e.g., 'React + Tailwind CSS')"
+          },
+          "design_system": {
+            "type": "string",
+            "description": "Design system (e.g., 'Material Design 3', 'custom')"
+          },
+          "reference_image": {
+            "type": "string",
+            "description": "Path to a default reference image for style consistency. When set, all image generations will match this image's style unless overridden by an explicit reference_image in generate_image."
+          }
+        },
+        "required": [
+          "project_type"
+        ]
+      }
+    },
+    {
+      "name": "get_prompt_templates",
+      "description": "List available prompt templates by category. Templates provide proven prompt structures for common design tasks.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": [
+              "ui-mockups",
+              "game-assets",
+              "landing-pages",
+              "web-components",
+              "icons",
+              "all"
+            ],
+            "default": "all",
+            "description": "Template category to filter by"
+          }
+        }
+      }
+    }
+  ]
+}

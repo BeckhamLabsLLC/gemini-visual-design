@@ -86,7 +86,21 @@ plugin appearing in
 
 ## Measuring whether the plugin actually helps
 
-`claude plugin eval` runs a set of prompts several times with and without the
-plugin loaded, so you can see what it contributes and catch regressions when a
-new model ships. Worth setting up before the next release — nothing here
-currently measures whether Claude reaches for these tools at the right moment.
+The test suite proves the tools work when called. `evals/` checks whether Claude
+reaches for them at the right moment, which is the question that decides whether
+the plugin is worth installing.
+
+```bash
+claude plugin eval . --concurrency 3 --max-cost-usd 10
+```
+
+It runs each case with and without the plugin loaded and reports the delta. Runs
+are real Claude child sessions on your credential — about $0.13 each, so a full
+two-arm pass over five cases at the default 3 runs is roughly $4. The MCP server
+is mocked, so no Gemini API money is spent.
+
+Worth running before a release and whenever a new model ships: a model change
+can silently stop Claude reaching for a tool without breaking a single unit
+test. See `evals/README.md` for what each case asserts.
+
+This is deliberately not in CI — it needs a credential and costs money per run.
