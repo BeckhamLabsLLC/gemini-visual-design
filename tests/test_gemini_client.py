@@ -252,7 +252,9 @@ class TestPollVideoOperation:
             mock_client_inst.operations.get.return_value = op_done
             mock_client_inst.files.download.return_value = b"video-bytes"
 
-            with patch("gemini_visual_mcp.gemini_client.time.sleep"):
+            # The loop waits on an Event (so cancellation is prompt), not
+            # time.sleep, so that is what has to be short-circuited here.
+            with patch("gemini_visual_mcp.gemini_client.POLL_INTERVAL_SECONDS", 0):
                 client = GeminiClient(api_key="test-key")
                 results = await client.poll_video_operation(op_pending)
 
@@ -274,3 +276,76 @@ class TestPollVideoOperation:
             # Operation already done — no polling required.
             mock_client_inst.operations.get.assert_not_called()
             assert results == [{"data": b"video-bytes", "mime_type": "video/mp4"}]
+
+
+class TestPollCancellationAndTimeout:
+    """to_thread cannot interrupt a running thread, so the loop has to opt in."""
+
+    @pytest.mark.asyncio
+    async def test_explicit_zero_timeout_is_not_treated_as_unset(self):
+        """`timeout_seconds or DEFAULT` would silently wait the full default."""
+        with patch("gemini_visual_mcp.gemini_client.genai") as mock_genai:
+            mock_client_inst = mock_genai.Client.return_value
+            op_pending = MagicMock(done=False)
+            mock_client_inst.operations.get.return_value = op_pending
+
+            with patch("gemini_visual_mcp.gemini_client.POLL_INTERVAL_SECONDS", 0):
+                client = GeminiClient(api_key="test-key")
+                with pytest.raises(GeminiClientError, match="timed out after 0s"):
+                    await client.poll_video_operation(op_pending, timeout_seconds=0)
+
+    @pytest.mark.asyncio
+    async def test_timeout_raises_with_actionable_message(self):
+        with patch("gemini_visual_mcp.gemini_client.genai") as mock_genai:
+            mock_client_inst = mock_genai.Client.return_value
+            op_pending = MagicMock(done=False)
+            mock_client_inst.operations.get.return_value = op_pending
+
+            with patch("gemini_visual_mcp.gemini_client.POLL_INTERVAL_SECONDS", 0):
+                client = GeminiClient(api_key="test-key")
+                with pytest.raises(GeminiClientError, match="GEMINI_VISUAL_VIDEO_TIMEOUT"):
+                    await client.poll_video_operation(op_pending, timeout_seconds=0.01)
+
+    @pytest.mark.asyncio
+    async def test_cancellation_stops_the_polling_thread(self):
+        """An abandoned request must not pin a worker for the full budget."""
+        import asyncio
+
+        with patch("gemini_visual_mcp.gemini_client.genai") as mock_genai:
+            mock_client_inst = mock_genai.Client.return_value
+            op_pending = MagicMock(done=False)
+            mock_client_inst.operations.get.return_value = op_pending
+
+            with patch("gemini_visual_mcp.gemini_client.POLL_INTERVAL_SECONDS", 0.05):
+                client = GeminiClient(api_key="test-key")
+                task = asyncio.create_task(
+                    client.poll_video_operation(op_pending, timeout_seconds=300)
+                )
+                await asyncio.sleep(0.1)
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+
+                # The worker should notice within one poll interval rather than
+                # running out the 300s budget.
+                await asyncio.sleep(0.2)
+                calls_after_cancel = mock_client_inst.operations.get.call_count
+                await asyncio.sleep(0.2)
+                assert mock_client_inst.operations.get.call_count == calls_after_cancel
+
+    @pytest.mark.asyncio
+    async def test_transient_poll_failure_is_wrapped(self):
+        from google.genai import errors as ge
+
+        with patch("gemini_visual_mcp.gemini_client.genai") as mock_genai:
+            mock_client_inst = mock_genai.Client.return_value
+            op_pending = MagicMock(done=False)
+            err = ge.ServerError.__new__(ge.ServerError)
+            Exception.__init__(err, "503")
+            err.code, err.message, err.details, err.status = 503, "503", {}, None
+            mock_client_inst.operations.get.side_effect = err
+
+            with patch("gemini_visual_mcp.gemini_client.POLL_INTERVAL_SECONDS", 0):
+                client = GeminiClient(api_key="test-key")
+                with pytest.raises(GeminiClientError):
+                    await client.poll_video_operation(op_pending, timeout_seconds=30)

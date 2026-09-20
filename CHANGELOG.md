@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `analyze_design` runs on the text model instead of an image-generation model, and constrains output with a JSON schema instead of parsing prose out of a code fence. Critique no longer degrades to an unparsed blob when the model adds a preamble.
 - Permanent API errors (400/404) are no longer retried; a bad model id fails in one call instead of three plus ~7s of backoff. Error classification uses typed SDK exceptions rather than substring matching, which previously read "401 bytes" in a message as an auth failure.
 - Added an HTTP timeout, so a hung connection can no longer block a worker thread indefinitely.
+- Video polling honours cancellation. `asyncio.to_thread` cannot interrupt a running thread, so an abandoned request previously kept a worker polling for the entire budget; the loop now waits on an event and stops within one poll interval.
 - `save_asset` validates the destination before creating directories, constrains it to the project root, and refuses to overwrite an existing file.
 - Preview writes are atomic; a crash mid-write no longer leaves truncated JSON that silently discards a style profile.
 - Generated filenames use a random suffix instead of a per-process counter, so two servers can no longer overwrite each other's output.

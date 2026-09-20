@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import threading
 import time
 from typing import Any, Optional
 
@@ -27,6 +28,9 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 BASE_DELAY = 1.0
 MAX_DELAY = 30.0
+
+# How long to wait between video operation polls.
+POLL_INTERVAL_SECONDS = 5.0
 
 # HTTP status codes worth retrying. Notably absent: 400 and 404. Retrying a
 # malformed request or a retired model id just burns time before failing.
@@ -349,19 +353,29 @@ class GeminiClient:
 
         Returns list of dicts with keys: 'data' (bytes), 'mime_type' (str)
         """
-        budget = timeout_seconds or VIDEO_POLL_TIMEOUT_SECONDS
+        # `or` would treat an explicit 0 as unset and wait the full default.
+        budget = VIDEO_POLL_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
+        # asyncio.to_thread cannot interrupt a running thread, so an abandoned
+        # request would otherwise keep a worker polling for the full budget.
+        # The loop watches this instead of sleeping straight through.
+        cancelled = threading.Event()
 
         def _poll():
             op = operation
             deadline = time.monotonic() + budget
             while not op.done:
+                if cancelled.is_set():
+                    raise GeminiClientError("Video polling cancelled by the caller")
                 if time.monotonic() >= deadline:
                     raise GeminiClientError(
                         f"Video generation timed out after {budget}s. The job may "
                         "still finish server-side; raise GEMINI_VISUAL_VIDEO_TIMEOUT "
                         "to wait longer."
                     )
-                time.sleep(5)
+                # Wait in one place so cancellation is noticed within a second
+                # rather than after the full poll interval.
+                if cancelled.wait(POLL_INTERVAL_SECONDS):
+                    raise GeminiClientError("Video polling cancelled by the caller")
                 op = self._sync_call(self._client.operations.get, op)
 
             results = []
@@ -380,4 +394,8 @@ class GeminiClient:
                 raise GeminiClientError("Video generation finished but returned no video")
             return results
 
-        return await asyncio.to_thread(_poll)
+        try:
+            return await asyncio.to_thread(_poll)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
