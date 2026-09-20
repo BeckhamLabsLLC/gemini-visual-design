@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Image generation at the "final quality" tier was completely broken.** Google retired all Imagen 4 models on 2026-08-17, but `config.py` still pinned `imagen-4.0-generate-001`, so every `model="imagen"` call - and every `auto` call whose prompt mentioned "final", "production", or "hero image" - failed after three retries. Replaced by `gemini-3-pro-image`.
 - **The MCP server would not start for anyone installing the plugin fresh.** `.mcp.json` relied on a `cwd` key that Claude Code ignores ([claude-code#17565](https://github.com/anthropics/claude-code/issues/17565)) to put `src/` on `sys.path`. Without a manual `pip install -e .`, the server died on `import mcp`. It now launches under `uv run`, which provisions dependencies automatically.
+- **Template aspect ratios never reached the API.** All 25 templates declare an `aspect_ratio` and `resolution` (icons `1:1`, character sprites `9:16`, hero shots `16:9/2K`), and `enhance()` computed them and then discarded the result — so `template="icons/app-icon"` still produced a 16:9 image. Shape now resolves explicit argument → template → style profile → global default.
 - **`aspect_ratio` was accepted and then silently ignored** on the default generation path, while still being recorded in metadata as though it had applied. Now wired through `GenerateContentConfig.image_config`, along with a new `resolution` parameter (1K/2K/4K).
 - **Metadata lied about which model produced an asset.** Sidecars hardcoded `gemini-2.5-flash-image` regardless of what actually ran. They now record the model the server reports back.
 - The project root is resolved from `CLAUDE_PROJECT_DIR`, not the unnamespaced `PROJECT_DIR` (which collides with common build tooling). Operations that write into your project refuse to run rather than silently targeting the plugin's own directory.
@@ -42,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/smoke_live.py` - an opt-in end-to-end test against the real API, with per-check cost estimates.
 - Regression tests that fail if any configured model id is retired, is a `-preview` build, or is hardcoded outside `config.py`.
 - Real coverage for the `call_tool` error map, which previously had none.
+- `edit_image` now surfaces the model's commentary as `model_notes`, matching `generate_image`. It was being returned internally and dropped.
 
 ### Changed
 - `model` values are now `draft`/`fast`/`pro`/`auto`. The old `gemini` and `imagen` names still work as aliases and emit a deprecation warning, but are no longer advertised in the tool schema.

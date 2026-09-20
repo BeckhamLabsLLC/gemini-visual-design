@@ -104,7 +104,7 @@ class TestEnhance:
     """Tests for the full enhancement pipeline."""
 
     def test_enhance_basic(self):
-        prompt, warnings = enhance("A modern dark dashboard with analytics charts")
+        prompt, warnings, _meta = enhance("A modern dark dashboard with analytics charts")
         assert len(prompt) > len("A modern dark dashboard with analytics charts")
         assert isinstance(warnings, list)
 
@@ -115,7 +115,7 @@ class TestEnhance:
             "framework": "React",
             "visual_style": "brutalist",
         }
-        prompt, _ = enhance(
+        prompt, _, _meta = enhance(
             "A login page with email and password fields",
             profile=profile,
         )
@@ -123,14 +123,14 @@ class TestEnhance:
         assert "React" in prompt
 
     def test_enhance_with_template(self):
-        prompt, warnings = enhance(
+        prompt, warnings, _meta = enhance(
             "My analytics app dashboard",
             template="ui-mockups/dashboard",
         )
         assert "sidebar" in prompt.lower() or "dashboard" in prompt.lower()
 
     def test_enhance_with_invalid_template_warns(self):
-        prompt, warnings = enhance(
+        prompt, warnings, _meta = enhance(
             "A dashboard design",
             template="nonexistent/template",
         )
@@ -138,7 +138,7 @@ class TestEnhance:
         assert any("template" in w.message.lower() for w in warnings)
 
     def test_enhance_adds_structural_hints(self):
-        prompt, _ = enhance("A blue button for my website")
+        prompt, _, _meta = enhance("A blue button for my website")
         # Should add quality/lighting hints since none present
         assert "quality" in prompt.lower() or "lighting" in prompt.lower()
 
@@ -146,7 +146,7 @@ class TestEnhance:
         original = (
             "A dashboard with professional lighting, high quality rendering, clean organized layout"
         )
-        prompt, _ = enhance(original)
+        prompt, _, _meta = enhance(original)
         # Should not double up on hints
         assert prompt.count("high quality") <= 1
 

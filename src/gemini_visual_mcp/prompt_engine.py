@@ -656,7 +656,7 @@ def enhance(
     prompt: str,
     profile: Optional[dict] = None,
     template: Optional[str] = None,
-) -> tuple[str, list[PromptValidationWarning]]:
+) -> tuple[str, list[PromptValidationWarning], dict]:
     """Full prompt enhancement pipeline.
 
     1. Validate (may raise PromptValidationError)
@@ -670,7 +670,10 @@ def enhance(
         template: Optional "category/key" template identifier
 
     Returns:
-        Tuple of (enhanced prompt, list of warnings)
+        Tuple of (enhanced prompt, warnings, template metadata). The metadata
+        carries the template's aspect_ratio / resolution / recommended_model so
+        callers can honor them; an icon template asking for 1:1 is useless if
+        the caller still sends 16:9.
     """
     # Step 1: Validate
     warnings = validate(prompt)
@@ -703,7 +706,7 @@ def enhance(
     # Step 4: Add structural hints if the prompt seems bare
     prompt = _add_structural_hints(prompt)
 
-    return prompt, warnings
+    return prompt, warnings, template_meta
 
 
 def _add_structural_hints(prompt: str) -> str:

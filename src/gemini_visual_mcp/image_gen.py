@@ -63,7 +63,7 @@ async def generate_images(
     prompt: str,
     tier: str = DEFAULT_IMAGE_TIER,
     count: int = DEFAULT_IMAGE_COUNT,
-    aspect_ratio: str = DEFAULT_ASPECT_RATIO,
+    aspect_ratio: Optional[str] = None,
     resolution: Optional[str] = None,
     cwd: str = ".",
     use_profile: bool = True,
@@ -87,8 +87,21 @@ async def generate_images(
         if Path(ref_path).is_file():
             reference_image = ref_path
 
-    enhanced_prompt, warnings = enhance(prompt, profile=profile, template=template)
+    enhanced_prompt, warnings, template_meta = enhance(prompt, profile=profile, template=template)
     warnings = list(warnings) + list(extra_warnings or [])
+
+    # Precedence for shape and size: explicit argument, then the template's
+    # own recommendation, then the project profile's default, then the global
+    # default. Without this an icons/* template asking for 1:1 still produced
+    # a 16:9 image.
+    if aspect_ratio is None:
+        aspect_ratio = (
+            template_meta.get("aspect_ratio")
+            or (profile or {}).get("default_aspect_ratio")
+            or DEFAULT_ASPECT_RATIO
+        )
+    if resolution is None:
+        resolution = template_meta.get("resolution") or (profile or {}).get("default_resolution")
 
     resolution, clamp_warning = clamp_resolution(tier, resolution)
     if clamp_warning:
@@ -178,7 +191,7 @@ async def auto_generate(
     prompt: str,
     model: str = "auto",
     count: int = DEFAULT_IMAGE_COUNT,
-    aspect_ratio: str = DEFAULT_ASPECT_RATIO,
+    aspect_ratio: Optional[str] = None,
     resolution: Optional[str] = None,
     cwd: str = ".",
     use_profile: bool = True,

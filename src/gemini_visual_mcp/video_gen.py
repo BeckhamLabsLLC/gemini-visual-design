@@ -41,7 +41,7 @@ async def generate_video(
     """
     # Load profile and enhance prompt
     profile = load_profile(cwd) if use_profile else None
-    enhanced_prompt, warnings = enhance(prompt, profile=profile)
+    enhanced_prompt, warnings, _template_meta = enhance(prompt, profile=profile)
 
     # Read reference image if provided
     image_data = None

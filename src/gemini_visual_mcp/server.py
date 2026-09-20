@@ -27,7 +27,6 @@ from .asset_manager import (
 from .config import (
     ANALYSIS_FOCUS_AREAS,
     ASPECT_RATIOS,
-    DEFAULT_ASPECT_RATIO,
     DEFAULT_IMAGE_TIER,
     IMAGE_RESOLUTIONS,
     MODEL_CHOICES_IMAGE,
@@ -465,7 +464,7 @@ class GeminiVisualDesignServer:
                 prompt=args["prompt"],
                 model=args.get("model", "auto"),
                 count=args.get("count", 1),
-                aspect_ratio=args.get("aspect_ratio") or DEFAULT_ASPECT_RATIO,
+                aspect_ratio=args.get("aspect_ratio"),
                 resolution=args.get("resolution"),
                 cwd=self._cwd(),
                 use_profile=args.get("use_profile", True),
@@ -505,6 +504,7 @@ class GeminiVisualDesignServer:
                 "original_path": result["original_path"],
                 "instruction": result["instruction"],
                 "model": result["model"],
+                **({"model_notes": result["text"]} if result.get("text") else {}),
                 "tip": "Original preserved. Use edit_image again to further refine.",
             }
 

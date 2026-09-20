@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gemini_visual_mcp.config import DEFAULT_ASPECT_RATIO
 from gemini_visual_mcp.image_gen import auto_generate
 
 
@@ -220,3 +221,45 @@ class TestAutoGenerate:
         call_kwargs = mock_client.generate_image_gemini.call_args.kwargs
         assert call_kwargs["reference_image_data"] is None
         assert call_kwargs["reference_mime_type"] is None
+
+
+class TestShapePrecedence:
+    """aspect_ratio / resolution: explicit > template > profile > default."""
+
+    async def _run(self, mock_client, tmp_path, profile=None, **kwargs):
+        with patch("gemini_visual_mcp.image_gen.load_profile", return_value=profile):
+            with patch("gemini_visual_mcp.image_gen.save_generated") as mock_save:
+                mock_save.return_value = tmp_path / "gen.png"
+                await auto_generate(
+                    client=mock_client,
+                    prompt="A settings gear icon, flat, single color",
+                    cwd=str(tmp_path),
+                    use_profile=profile is not None,
+                    **kwargs,
+                )
+        return mock_client.generate_image_gemini.call_args.kwargs
+
+    @pytest.mark.asyncio
+    async def test_template_aspect_ratio_is_applied(self, mock_client, tmp_path):
+        """An icons/* template asks for 1:1; it used to be computed and dropped."""
+        kwargs = await self._run(mock_client, tmp_path, template="icons/app-icon")
+        assert kwargs["aspect_ratio"] == "1:1"
+
+    @pytest.mark.asyncio
+    async def test_explicit_argument_beats_template(self, mock_client, tmp_path):
+        kwargs = await self._run(
+            mock_client, tmp_path, template="icons/app-icon", aspect_ratio="21:9"
+        )
+        assert kwargs["aspect_ratio"] == "21:9"
+
+    @pytest.mark.asyncio
+    async def test_profile_default_used_when_nothing_else_says(self, mock_client, tmp_path):
+        profile = {"default_aspect_ratio": "4:3", "default_resolution": "2K"}
+        kwargs = await self._run(mock_client, tmp_path, profile=profile)
+        assert kwargs["aspect_ratio"] == "4:3"
+        assert kwargs["resolution"] == "2K"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_global_default(self, mock_client, tmp_path):
+        kwargs = await self._run(mock_client, tmp_path)
+        assert kwargs["aspect_ratio"] == DEFAULT_ASPECT_RATIO
